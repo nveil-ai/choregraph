@@ -1,0 +1,823 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2025 NVEIL SAS
+SPDX-FileContributor: Clément Baraille
+SPDX-FileContributor: Pierre Jacquet
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+    <!-- ================================================================== -->
+    <!-- PORT VALUE TYPES                                                   -->
+    <!-- ================================================================== -->
+    
+    <xs:simpleType name="PortType">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="DATAFRAME"/>
+            <xs:enumeration value="LIST"/>
+            <xs:enumeration value="FLOAT"/>
+            <xs:enumeration value="INTEGER"/>
+            <xs:enumeration value="BOOLEAN"/>
+            <xs:enumeration value="STRING"/>
+            <xs:enumeration value="JSON"/>
+            <xs:enumeration value="DICT"/>
+            <xs:enumeration value="IMAGE"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- ================================================================== -->
+    <!-- FUNCTION TYPE ENUMERATION                                          -->
+    <!-- ================================================================== -->
+    
+    <xs:simpleType name="TransformFunction">
+        <xs:restriction base="xs:string">
+            <!-- Reshape operations -->
+            <xs:enumeration value="melt"/>
+            <!-- Advanced Transformation operations -->
+            <xs:enumeration value="arithmetic_op"/>
+            <xs:enumeration value="discretize"/>
+            <!-- Time Series operations -->
+            <xs:enumeration value="extract_date_part"/>
+            <xs:enumeration value="rolling_statistics"/>
+            <xs:enumeration value="lag_lead"/>
+            <xs:enumeration value="offset_datetime"/>
+            <xs:enumeration value="forecast_time_series"/>
+            <!-- JSON operations -->
+            <xs:enumeration value="flatten_json"/>
+            <!-- Excel operations -->
+            <xs:enumeration value="tidy_excel_data"/>
+            <!-- Geolocation operations -->
+            <xs:enumeration value="geocode_location"/>
+            <xs:enumeration value="get_country_contours"/>
+            <!-- NLP operations -->
+            <xs:enumeration value="nlp_binarize_labels_auto"/>
+            <xs:enumeration value="nlp_binarize_labels_hinted"/>
+            <!-- Hierarchical transform -->
+            <xs:enumeration value="hierarchical_rollup"/>
+            <!-- Image operations -->
+            <xs:enumeration value="image_to_dataframe"/>
+            <xs:enumeration value="extract_channel"/>
+            <xs:enumeration value="image_metadata"/>
+            <!-- Code execution -->
+            <xs:enumeration value="execute_code"/>
+            <!-- Partition utilities -->
+            <xs:enumeration value="concat_partitions"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+
+    <!-- ================================================================== -->
+    <!-- JOIN TYPE ENUMERATION                                              -->
+    <!-- ================================================================== -->
+    
+    <xs:simpleType name="JoinHow">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="inner"/>
+            <xs:enumeration value="outer"/>
+            <xs:enumeration value="left"/>
+            <xs:enumeration value="right"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <!-- ================================================================== -->
+    <!-- ROOT ELEMENT                                                       -->
+    <!-- ================================================================== -->
+
+    <xs:element name="choregraph">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="inputs" type="InputsType" minOccurs="0"/>
+                <xs:element name="pipeline" type="PipelineType"/>
+            </xs:sequence>
+            <xs:attribute name="schemaVersion" type="xs:string" default="1.0.0"/>
+        </xs:complexType>
+    </xs:element>
+
+    <!-- ================================================================== -->
+    <!-- INPUTS TYPE                                                        -->
+    <!-- ================================================================== -->
+
+    <xs:complexType name="InputsType">
+        <xs:sequence>
+            <xs:element name="input" maxOccurs="unbounded" minOccurs="0">
+                <xs:complexType>
+                    <xs:attribute name="id" type="xs:string" use="required"/>
+                    <xs:attribute name="label" type="xs:string"/>
+                    <xs:attribute name="location" type="xs:string"/>
+                    <xs:attribute name="format" type="xs:string"/>
+                    <xs:attribute name="visibility" type="xs:boolean"/>
+                    <xs:attribute name="url" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>Origin URL for URL-sourced data.</xs:documentation>
+                        </xs:annotation>
+                    </xs:attribute>
+
+                    <!-- CSV format options -->
+                    <xs:attribute name="header" type="xs:string"/>
+                    <xs:attribute name="fieldSeparator" type="xs:string"/>
+                    <xs:attribute name="skipLines" type="xs:string"/>
+                    <xs:attribute name="recordSeparator" type="xs:string"/>
+
+                    <!-- Temporal collection: multi-file sequence as ONE input -->
+                    <xs:attribute name="temporalFiles" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>
+                                Pipe-separated list of file paths forming a temporal sequence.
+                                Each file represents one timestep. The input's location points
+                                to the first (representative) file.
+                            </xs:documentation>
+                        </xs:annotation>
+                    </xs:attribute>
+                    <xs:attribute name="collectionTimeMode" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>
+                                Temporal mode: "index" (files play in order, no time semantics)
+                                or "time_based" (real time interval between files).
+                            </xs:documentation>
+                        </xs:annotation>
+                    </xs:attribute>
+                    <xs:attribute name="collectionTimeDelta" type="xs:string">
+                        <xs:annotation>
+                            <xs:documentation>
+                                ISO 8601 duration between consecutive timesteps (e.g. "PT60S").
+                                Only meaningful when collectionTimeMode="time_based".
+                            </xs:documentation>
+                        </xs:annotation>
+                    </xs:attribute>
+
+                    <!-- Allow additional format-specific options -->
+                    <xs:anyAttribute processContents="lax"/>
+                </xs:complexType>
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <!-- ================================================================== -->
+    <!-- PIPELINE TYPE                                                      -->
+    <!-- ================================================================== -->
+
+    <xs:complexType name="PipelineType">
+        <xs:sequence>
+            <xs:element name="node" maxOccurs="unbounded" minOccurs="0">
+                <xs:complexType>
+                    <xs:sequence>
+                        <!-- Input ports: data sources and parameters consumed by the transform -->
+                        <xs:element name="inputPort" type="InputPortElement" 
+                                    minOccurs="1" maxOccurs="unbounded"/>
+                        <!-- Output ports: data produced by the transform -->
+                        <xs:element name="outputPort" type="OutputPortElement" 
+                                    minOccurs="1" maxOccurs="unbounded"/>
+                    </xs:sequence>
+                    <xs:attribute name="id" type="xs:string" use="required"/>
+                    <xs:attribute name="label" type="xs:string"/>
+                    <xs:attribute name="type" type="TransformFunction" use="required"/>
+                </xs:complexType>
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <!-- ================================================================== -->
+    <!-- INPUT PORT ELEMENT TYPE                                            -->
+    <!-- ================================================================== -->
+
+    <!-- Input ports are parameters or data sources consumed by a transform -->
+    <xs:complexType name="InputPortElement" mixed="true">
+        <xs:attribute name="name" type="xs:string" use="required"/>
+        <!-- Static value for parameter ports -->
+        <xs:attribute name="value" type="xs:string" use="optional"/>
+        <!-- Reference to source entity ID (input or output port) for connected ports -->
+        <xs:attribute name="sourceRef" type="xs:string" use="optional"/>
+        <!-- Port data type -->
+        <xs:attribute name="type" type="PortType" use="optional"/>
+    </xs:complexType>
+
+    <!-- ================================================================== -->
+    <!-- OUTPUT PORT ELEMENT TYPE                                           -->
+    <!-- ================================================================== -->
+
+    <!-- Output ports are data produced by a transform with unique IDs for referencing -->
+    <xs:complexType name="OutputPortElement">
+        <!-- Unique integer ID for this output port (can be referenced by downstream inputPorts via sourceRef) -->
+        <xs:attribute name="id" type="xs:integer" use="required"/>
+        <!-- Port name (e.g., "result", "mask") -->
+        <xs:attribute name="name" type="xs:string" use="required"/>
+        <!-- Port data type -->
+        <!-- Human-readable label for display in Kedro graph (polished name describing the dataset) -->
+        <xs:attribute name="label" type="xs:string" use="required"/>
+        <xs:attribute name="type" type="PortType" use="optional"/>
+        <!-- Visibility controls whether this output is exposed for visualization -->
+        <xs:attribute name="visibility" type="xs:boolean" default="false"/>
+    </xs:complexType>
+
+    <!-- ================================================================== -->
+    <!-- FUNCTION DEFINITIONS (for documentation and catalogue extraction) -->
+    <!-- ================================================================== -->
+
+    <!--
+    ==========================================================================
+    RESHAPE OPERATIONS
+    ==========================================================================
+    -->
+
+    <xs:complexType name="Melt">
+        <xs:annotation>
+            <xs:documentation>
+                Converts a wide-format table into long format by unpivoting
+                selected columns into rows.  Useful after a join that produced
+                suffixed columns to get a single column with a "source" identifier.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="melt" group="ReshapeOperations"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The wide-format input DataFrame -->
+            <xs:element name="df" type="DataFrame"/>
+            <!-- Column(s) to keep as row identifiers (not melted). Comma-separated. -->
+            <xs:element name="id_columns" type="List" minOccurs="0"/>
+            <!-- Column(s) to unpivot. If omitted, all non-id columns are melted. Comma-separated. -->
+            <xs:element name="value_columns" type="List" minOccurs="0"/>
+            <!-- Name for the new column holding the former column headers (default: "variable") -->
+            <xs:element name="var_name" type="String" minOccurs="0"/>
+            <!-- Name for the new column holding the values (default: "value") -->
+            <xs:element name="value_name" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!--
+    ==========================================================================
+    ADVANCED TRANSFORMATIONS
+    ==========================================================================
+    -->
+
+
+    <xs:complexType name="ArithmeticOp">
+        <xs:annotation>
+            <xs:documentation>
+                 Applies arithmetic operator (ADD, SUB, PROD, DIV) between column and column/constant.
+                 Use right_column for column-to-column operations OR constant for column-to-scalar operations.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="arithmetic_op"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="left_column" type="String"/>
+            <xs:choice>
+                <xs:element name="right_column" type="String"/>
+                <xs:element name="constant" type="Float"/>
+            </xs:choice>
+            <xs:element name="operator" type="String" minOccurs="0"/>
+            <xs:element name="output_column" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!--
+    ==========================================================================
+    TIME SERIES OPERATIONS
+    ==========================================================================
+    -->
+
+    <xs:complexType name="ExtractDatePart">
+        <xs:annotation>
+            <xs:documentation>
+                Extracts a date/time component from a datetime column.
+                part (one of): YEAR, MONTH, DAY, DAY_OF_YEAR, WEEKDAY
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="extract_date_part"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="column" type="String"/>   <!-- (Semantic: COLUMN_NAME) -->
+            <xs:element name="part" type="String"/>      <!-- YEAR, MONTH, DAY, DAY_OF_YEAR, WEEKDAY -->
+            <xs:element name="output_column" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="RollingStatistics">
+        <xs:annotation>
+            <xs:documentation>
+                Computes a rolling-window or cumulative statistic for a column. Available functions: MEAN, STD, MIN, MAX, SUM, CUMSUM.
+                Rolling functions (MEAN, STD, MIN, MAX, SUM) automatically use a centered window for temporal alignment. CUMSUM uses trailing accumulation and does not require window_size.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="rolling_statistics"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="column" type="String"/>          <!-- (Semantic: COLUMN_NAME) -->
+            <xs:element name="window_size" type="Integer" minOccurs="0"/> <!-- required unless function=CUMSUM -->
+            <xs:element name="function" type="String"/>        <!-- MEAN, STD, MIN, MAX, SUM, CUMSUM -->
+            <!-- (Semantic: COLUMN_NAME_OR_LIST) -->
+            <xs:element name="group_by" type="List" minOccurs="0"/>
+            <xs:element name="output_column" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="LagLead">
+        <xs:annotation>
+            <xs:documentation>
+                Lags or leads a column by N periods.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="lag_lead"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="column" type="String"/>    <!-- (Semantic: COLUMN_NAME) -->
+            <xs:element name="periods" type="Integer"/>  <!-- positive=lag, negative=lead -->
+            <xs:element name="output_column" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="OffsetDatetime">
+        <xs:annotation>
+            <xs:documentation>
+                Adds or subtracts a time duration to every value in a datetime column.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="offset_datetime"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="column" type="String"/>          <!-- (Semantic: COLUMN_NAME) -->
+            <xs:element name="offset" type="Integer"/>         <!-- positive=add, negative=subtract -->
+            <xs:element name="unit" type="String"/>            <!-- DAYS, HOURS, MINUTES, SECONDS, WEEKS, MONTHS, YEARS -->
+            <xs:element name="output_column" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+
+    <xs:complexType name="ForecastTimeSeries">
+        <xs:annotation>
+            <xs:documentation>
+                Forecasts a time series using RandomForest on pct-change features with Monte-Carlo recursive prediction. Returns a Dataframe with date_col, value_col, Forecast_lower, Forecast_upper and Is_Forecast columns.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="forecast_time_series" group="TimeSeriesOperations"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="date_col" type="String"/>
+            <xs:element name="value_col" type="String"/>
+            <xs:element name="horizon" type="Integer" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="NormalizeColumn">
+        <xs:annotation>
+            <xs:documentation>
+                Normalizes a numeric column using min-max or z-score.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="normalize_column"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="column" type="String"/>
+            <xs:element name="method" type="String" minOccurs="0"/>
+            <xs:element name="output_column" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="Discretize">
+        <xs:annotation>
+            <xs:documentation>
+                Discretizes a continuous column into bins.
+                When labels are provided (e.g. "low, medium, high") the bins
+                are named with those labels instead of integers.
+                Using labels is warmly recommended for readability. 
+                The number of labels must match the number of bins.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="discretize"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="df" type="DataFrame"/>
+            <xs:element name="column" type="String"/>
+            <xs:element name="bins" type="Integer" minOccurs="0"/>
+            <xs:element name="strategy" type="String" minOccurs="0"/>
+            <xs:element name="output_column" type="String" minOccurs="0"/>
+            <!-- Optional: human-readable names for bins (e.g. "low, medium, high"). Count must equal bins. -->
+            <xs:element name="labels" type="List" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!--
+    ==========================================================================
+    JSON OPERATIONS
+    ==========================================================================
+    -->
+
+    <xs:complexType name="FlattenJson">
+        <xs:annotation>
+            <xs:documentation>
+                Converts arbitrary JSON data into a flat DataFrame.
+                Auto-detects common patterns:
+                - Array of objects: [{col:val,...}, ...] → direct table
+                - Dict of paired arrays: {key: [[x,y],...], ...} → joined on shared first column (e.g. CoinGecko/API time-series)
+                - Dict of simple arrays: {key: [v1,v2,...], ...} → one column per key
+                - Nested structures → json_normalize fallback
+                This is the default transform to use when loading flat/tabular JSON data
+                from APIs or files. For richer structures (graphs, nested collections), prefer
+                `execute_code` nodes driven by the `extract_with` cartography block in the
+                dataset metadata.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="flatten_json" group="JSONOperations"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The input JSON data (loaded from a JSON file or URL) -->
+            <xs:element name="data">
+                <xs:complexType>
+                    <xs:attribute name="sourceRef" type="xs:integer" use="required"/>
+                    <xs:attribute name="type" type="xs:string" fixed="JSON"/>
+                </xs:complexType>
+            </xs:element>
+            <!-- Optional: top-level key to drill into before flattening -->
+            <xs:element name="root_key" type="String" minOccurs="0"/>
+            <!-- Optional: comma-separated column names to assign -->
+            <xs:element name="columns" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!--
+    ==========================================================================
+    GEOLOCATION OPERATIONS
+    ==========================================================================
+    -->
+
+    <!-- Scope enumeration for geocode_location -->
+    <xs:simpleType name="GeoScope">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="city"/>
+            <xs:enumeration value="country"/>
+            <xs:enumeration value="unknown"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="GeocodeLocation">
+        <xs:annotation>
+            <xs:documentation>
+                Enriches a DataFrame with geo location data (columns : "latitude", "longitude", "country", "iso2", "iso3")
+                based on a column containing location names (e.g., "France", "Paris") or codes (e.g., "FR", "US").
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="geocode_location"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The input DataFrame -->
+            <xs:element name="df" type="DataFrame"/>
+            <!-- The column containing location names or codes -->
+            <xs:element name="column" type="String"/>
+            <!-- Scope: "city", "country", or "unknown" (default) -->
+            <xs:element name="scope" minOccurs="0">
+                <xs:complexType>
+                    <xs:attribute name="value" type="GeoScope" default="unknown"/>
+                    <xs:attribute name="type" type="xs:string" fixed="STRING"/>
+                </xs:complexType>
+            </xs:element>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="GetCountryContours">
+        <xs:annotation>
+            <xs:documentation>
+                Downloads and returns country boundary geometries (GeoDataFrame) for the ISO3 codes in the specified column.
+                Uses Natural Earth 10m resolution data. Results are cached locally after first download.
+                Output the original dataframe columns plus a 'geometry' column.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="get_country_contours"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The input DataFrame -->
+            <xs:element name="df" type="DataFrame"/>
+            <!-- The column containing ISO3 country codes -->
+            <xs:element name="column" type="String"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!-- ================================================================== -->
+    <!-- NLP OPERATIONS                                                     -->
+    <!-- ================================================================== -->
+
+    <xs:complexType name="NlpBinarizeLabelsAuto">
+        <xs:annotation>
+            <xs:documentation>
+                Automatically detects language and delimiters, lemmatizes labels, and returns
+                a long-format table where the input column keeps its name and holds
+                one label per row, with an added "value" column (0/1 occurrence).
+                Limited to the top N most frequent labels (default 30).
+                Each row of the original data is repeated once per detected label.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="nlp_binarize_labels_auto"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The input DataFrame -->
+            <xs:element name="df" type="DataFrame"/>
+            <!-- The column containing labels -->
+            <xs:element name="column" type="String"/>
+            <!-- Max number of labels to keep (default: 30) -->
+            <xs:element name="max_labels" type="Integer" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="NlpBinarizeLabelsHinted">
+        <xs:annotation>
+            <xs:documentation>
+                Uses fuzzy matching to map extracted tokens to the provided list of hints.
+                Prefer this function when all unique labels are available as hints for
+                better control and accuracy.
+                Returns a long-format table where the input column keeps its name and
+                holds one matched label per row, with an added "value" column (0/1).
+                Limited to the top N most frequent labels (default 30).
+                Each row of the original data is repeated once per matched hint label.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="nlp_binarize_labels_hinted"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The input DataFrame -->
+            <xs:element name="df" type="DataFrame"/>
+            <!-- The column containing labels -->
+            <xs:element name="column" type="String"/>
+            <!-- List of labels to match against -->
+            <xs:element name="hints" type="List"/>
+            <!-- Max number of labels to keep (default: 30) -->
+            <xs:element name="max_labels" type="Integer" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!--
+    ==========================================================================
+    HIERARCHICAL TRANSFORM
+    ==========================================================================
+    -->
+
+    <xs:complexType name="HierarchicalRollup">
+        <xs:annotation>
+            <xs:documentation>
+                Transforms tabular data with N categorical columns representing a
+                hierarchy (broadest to most specific) into a parent-child-value
+                long-format DataFrame. All numeric columns from the source data are
+                preserved as summed aggregates at each hierarchy level.
+
+                WHEN TO USE:
+                - The user asks for a Treemap, Sunburst, Sankey, or hierarchical visualization.
+                - The user mentions "hierarchical mapping" of multiple columns.
+                - The visualization involves a Partition mark and the source data is
+                  a flat table with 2+ categorical columns forming a hierarchy.
+                - The user asks for a Sankey diagram based on hierarchical categories.
+
+                WHEN NOT TO USE:
+                - If the data is already in parent-child format, use it directly without this transform.
+
+                If value_column is omitted, row counts are used as the primary value.
+
+                INPUT ARGUMENTS:
+                - df:            input DataFrame with categorical columns representing the hierarchy
+                - path_columns:  ordered list of column names from broadest to most specific (e.g. "continent, country, city")
+                - value_column:  optional numeric column to aggregate (sum) at each level. If omitted, counts rows.
+                - root_label:    optional label for the synthetic root node. Default: "Total"
+                
+                OUTPUT COLUMNS (always present):
+                - target: path-based unique identifier of this node (e.g. "Europe/France/Paris")
+                - source: parent node's identifier (empty string for the root)
+                - value:  primary metric (sum of value_column, or count if omitted)
+                - count:  number of rows aggregated into this node
+
+                The (source, target, value) triple is directly consumable by
+                sankey / chord flow marks. For partition marks (treemap /
+                sunburst), bind target → x channel, source → parent channel,
+                value → y channel.
+
+                EXTRA NUMERIC COLUMNS (automatic):
+                All numeric columns from the input (except path_columns) are summed
+                at each hierarchy level and included as "{column}_sum". These can be
+                mapped to color or other visual channels in the VisuSpec.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="hierarchical_rollup" group="HierarchicalTransform"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The input DataFrame with hierarchical categorical columns -->
+            <xs:element name="df" type="DataFrame"/>
+            <!-- Ordered hierarchy columns, broadest to most specific.
+                 Example: "continent, country, city" or "Department, Gender, JobRole".
+                 (Semantic: COLUMN_NAME_OR_LIST) -->
+            <xs:element name="path_columns" type="List"/>
+            <!-- Optional: numeric column to aggregate (sum). If omitted, counts rows. (Semantic: COLUMN_NAME) -->
+            <xs:element name="value_column" type="String" minOccurs="0"/>
+            <!-- Optional: label for the synthetic root node. Default: "Total" -->
+            <xs:element name="root_label" type="String" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!--
+    ==========================================================================
+    IMAGE OPERATIONS
+    ==========================================================================
+    -->
+
+    <!-- Color format enumeration for image_to_dataframe -->
+    <xs:simpleType name="ImageColorFormat">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="rgba"/>
+            <xs:enumeration value="gray"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="ImageToDataframe">
+        <xs:annotation>
+            <xs:documentation>
+                Converts a PIL Image into a DataFrame with columns: x, y, r, g, b, a.
+                Large images are automatically subsampled to stay under max_pixels.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="image_to_dataframe" group="ImageOperations"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The input image (loaded by pillow.ImageDataset) -->
+            <xs:element name="image" type="Image"/>
+            <!-- Color format: "rgba" (columns r,g,b,a) or "gray" (column value). Defaults to "rgba". -->
+            <xs:element name="color_format" minOccurs="0">
+                <xs:complexType>
+                    <xs:attribute name="value" type="ImageColorFormat" default="rgba"/>
+                    <xs:attribute name="type" type="xs:string" fixed="STRING"/>
+                </xs:complexType>
+            </xs:element>
+            <!-- Maximum number of pixels to include. Defaults to 500000. -->
+            <xs:element name="max_pixels" type="Integer" minOccurs="0"/>
+            <!-- Explicit step size for subsampling. Overrides max_pixels. -->
+            <xs:element name="sample_step" type="Integer" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="ExtractChannel">
+        <xs:annotation>
+            <xs:documentation>
+                Extracts one colour channel (r, g, b, a, or gray) from an image
+                and returns a DataFrame with columns: x, y, value.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="extract_channel" group="ImageOperations"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="image" type="Image"/>
+            <!-- Channel to extract: "r", "g", "b", "a", or "gray" (default). -->
+            <xs:element name="channel" type="String" minOccurs="0"/>
+            <xs:element name="max_pixels" type="Integer" minOccurs="0"/>
+            <xs:element name="sample_step" type="Integer" minOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <xs:complexType name="ImageMetadata">
+        <xs:annotation>
+            <xs:documentation>
+                Returns a single-row DataFrame with columns: width, height,
+                channels, format, mode.
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="image_metadata" group="ImageOperations"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="image" type="Image"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!--
+    ==========================================================================
+    PARTITION UTILITIES
+    ==========================================================================
+    -->
+
+    <xs:complexType name="ConcatPartitions">
+        <xs:annotation>
+            <xs:documentation>
+                Concatenates a PartitionedDataset (temporal collection) into a
+                single DataFrame by loading all partitions in sorted key order.
+                Each row is tagged with a __partition__ column (0.0, 1.0, …)
+                that records which partition it came from.
+
+                Use this when a downstream transform needs global context across
+                all timesteps — for example:
+                - discretize with quantile strategy (global bin edges)
+                - aggregate / max / min across all timesteps
+                - normalize_column (global min/max)
+                - any transform where consistent results across partitions matter
+            </xs:documentation>
+            <xs:appinfo>
+                <function name="concat_partitions" group="PartitionUtilities"/>
+            </xs:appinfo>
+        </xs:annotation>
+        <xs:sequence>
+            <!-- The PartitionedDataset input (temporal collection) -->
+            <xs:element name="partitioned" type="DataFrame"/>
+        </xs:sequence>
+        <xs:attribute name="output_type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!-- ================================================================== -->
+    <!-- PORT TYPE DEFINITIONS (used by function definitions)               -->
+    <!-- ================================================================== -->
+
+    <!-- Port for DataFrame input -->
+    <xs:complexType name="DataFrame">
+        <xs:attribute name="sourceRef" type="xs:integer" use="required"/>
+        <xs:attribute name="type" type="xs:string" fixed="DATAFRAME"/>
+    </xs:complexType>
+
+    <!-- Port for Image input (loaded by pillow.ImageDataset, returns PIL.Image.Image) -->
+    <xs:complexType name="Image">
+        <xs:attribute name="sourceRef" type="xs:integer" use="required"/>
+        <xs:attribute name="type" type="xs:string" fixed="IMAGE"/>
+    </xs:complexType>
+
+    <!-- Port for STRING parameter -->
+    <xs:complexType name="String">
+        <xs:attribute name="value" type="xs:string" use="required"/>
+        <xs:attribute name="type" type="xs:string" fixed="STRING"/>
+    </xs:complexType>
+
+    <!-- Port for LIST parameter -->
+    <xs:complexType name="List">
+        <xs:annotation>
+            <xs:documentation>
+               Comma-separated values WITHOUT quotes or brackets.
+               Example: value="col1, col2" — NOT value='"col1", "col2"'
+            </xs:documentation>
+        </xs:annotation>
+        <xs:attribute name="value" type="xs:string"/>
+        <xs:attribute name="type" type="xs:string" fixed="LIST"/>
+    </xs:complexType>
+
+    <!-- Port for FLOAT parameter -->
+    <xs:complexType name="Float">
+        <xs:attribute name="value" type="xs:decimal" use="required"/>
+        <xs:attribute name="type" type="xs:string" fixed="FLOAT"/>
+    </xs:complexType>
+
+    <!-- Port for INTEGER parameter -->
+    <xs:complexType name="Integer">
+        <xs:attribute name="value" type="xs:integer"/>
+        <xs:attribute name="type" type="xs:string" fixed="INTEGER"/>
+    </xs:complexType>
+
+    <!-- Port for BOOLEAN parameter -->
+    <xs:complexType name="Boolean">
+        <xs:attribute name="value" type="xs:boolean"/>
+        <xs:attribute name="type" type="xs:string" fixed="BOOLEAN"/>
+    </xs:complexType>
+    
+    <!-- Port for JSON parameter -->
+    <xs:complexType name="Json">
+        <xs:attribute name="value" type="xs:string" use="required"/>
+        <xs:attribute name="type" type="xs:string" fixed="JSON"/>
+    </xs:complexType>
+
+    <!-- Port for DICT parameter -->
+    <xs:complexType name="Dict">
+        <xs:attribute name="value" type="xs:string" use="required"/>
+        <xs:attribute name="type" type="xs:string" fixed="DICT"/>
+    </xs:complexType>
+
+</xs:schema>

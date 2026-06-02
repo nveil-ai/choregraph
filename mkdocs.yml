@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: 2026 NVEIL SAS
+# SPDX-FileContributor: Pierre Jacquet
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+site_name: Choregraph
+site_description: "Choregraph — Graph-based data processing library for NVEIL"
+site_url: ""
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - section-index
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            docstring_section_style: spacy
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            merge_init_into_class: true
+            show_if_no_docstring: false
+            separate_signature: true
+            signature_crossrefs: true
+            heading_level: 2
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Architecture:
+    - architecture/index.md
+    - Pipeline Flow: architecture/pipeline-flow.md
+    - XML Specification: architecture/xml-spec.md
+  - API Reference:
+    - reference/index.md
+    - Core:
+      - Choregraph (Facade): reference/choregraph.md
+      - Parser: reference/parser.md
+      - Builder: reference/builder.md
+      - Wrapper: reference/wrapper.md
+    - Transform Library:
+      - reference/library/index.md
+      - Core Transforms: reference/library/core.md
+      - Excel Transforms: reference/library/excel.md
+      - Geo Collection: reference/library/geo.md
+      - NLP Collection: reference/library/nlp.md
+    - Infrastructure:
+      - Metadata: reference/metadata.md
+      - Loaders: reference/loaders.md
+      - Hooks: reference/hooks.md
+      - Viz Server: reference/viz.md
+      - XSD Catalogue: reference/xsd-catalogue.md
+    - Connectors:
+      - DIVE Connector: reference/connectors/dive.md
+  - Developer Guide:
+    - developer/index.md
+    - Adding Transforms: developer/adding-transforms.md
+
+copyright: "Copyright &copy; 2025 NVEIL — Proprietary"

@@ -1,0 +1,852 @@
+# SPDX-FileCopyrightText: 2026 NVEIL SAS
+# SPDX-FileContributor: Clément Baraille
+# SPDX-FileContributor: Pierre Jacquet
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+import logging
+import traceback
+from typing import List, Optional, Dict, Any, Literal, Union
+
+import numpy as np
+import pandas as pd
+from openpyxl.utils import range_boundaries, get_column_letter
+from openpyxl.utils.cell import column_index_from_string
+from pydantic import BaseModel, Field
+
+from .cartograph import TableStructure
+from .mapper import RegionMapping
+
+logger = logging.getLogger(__name__)
+# =============================================================================
+# SCHÉMAS - TRANSFORMATION PIPELINE
+# =============================================================================
+
+class TransformationStep(BaseModel):
+    """
+    Une étape de transformation dans le pipeline.
+    
+    Chaque étape correspond à une méthode du TidyEngine.
+    """
+    function_name: str = Field(..., description="Name of the TidyEngine method (e.g., 'unpivot_data')")
+    arguments: Dict[str, Any] = Field(..., description="Arguments to pass to the method")
+
+
+class TransformationPipeline(BaseModel):
+    """
+    Séquence ordonnée d'étapes de transformation.
+    
+    Ce pipeline est généré par l'ETL Compiler à partir d'un RegionMapping.
+    Il est ensuite exécuté par le TidyEngine.
+    """
+    steps: List[TransformationStep] = Field(..., description="Ordered list of transformation steps")
+
+# =============================================================================
+# TIDY ENGINE - Moteur d'exécution des transformations
+# =============================================================================
+
+class TidyEngine:
+    """
+    Moteur d'exécution pour les transformations de DataFrame.
+    
+    Chaque méthode correspond à une opération atomique.
+    Le pipeline est composé d'appels séquentiels à ces méthodes.
+    """
+    
+    def __init__(self, df: pd.DataFrame):
+        self.df = df.copy()
+        self.execution_log = []  
+
+    def _log_step(self, func_name: str, args: dict):
+        """Log l'exécution d'une étape avec l'état actuel du DataFrame."""
+        self.execution_log.append({
+            "step": len(self.execution_log) + 1,
+            "function": func_name,
+            "args": args,
+            "columns_after": list(self.df.columns),
+            "shape_after": self.df.shape
+        })
+
+
+    def select_columns(self, names: List[str]):
+        """Garde uniquement les colonnes listées. Skips columns not present."""
+        existing = [n for n in names if n in self.df.columns]
+        if existing:
+            self.df = self.df[existing]
+        self._log_step("select_columns", {"names": names})
+        return self
+
+    def drop_empty_rows(self, threshold: float = 0.9):
+        """Supprime les lignes avec trop de valeurs manquantes."""
+        limit = int((1 - threshold) * len(self.df.columns))
+        self.df = self.df.dropna(axis=0, thresh=max(1, limit))
+        self._log_step("drop_empty_rows", {"threshold": threshold})
+        return self
+
+    def clip_rows(self, max_rows: int):
+        """Keep only the first max_rows data rows.
+
+        Enforces the Cartographer's data_range boundary: any rows beyond
+        the declared data region (totals, footers) are clipped.
+        """
+        if len(self.df) > max_rows:
+            self.df = self.df.iloc[:max_rows].reset_index(drop=True)
+        self._log_step("clip_rows", {"max_rows": max_rows})
+        return self
+
+    def clean_text(self, columns: List[str], ops: List[str]):
+        """Applique des opérations de nettoyage texte (strip, lower, remove_extra_spaces).
+        Silently skips columns not present or duplicated in the DataFrame."""
+        columns = [c for c in columns if c in self.df.columns]
+        for col in columns:
+            # Skip if column name is duplicated (df[col] returns DataFrame, not Series)
+            if self.df.columns.tolist().count(col) > 1:
+                logger.warning("clean_text: skipping duplicate column '%s'", col)
+                continue
+            if 'strip' in ops:
+                self.df[col] = self.df[col].astype(str).str.strip()
+            if 'lower' in ops:
+                self.df[col] = self.df[col].astype(str).str.lower()
+            if 'remove_extra_spaces' in ops:
+                self.df[col] = self.df[col].astype(str).replace(r'\s+', ' ', regex=True)
+        self._log_step("clean_text", {"columns": columns, "ops": ops})
+        return self
+
+    def replace_values(self, column: str, old: Any, new: Any):
+        """Remplace une valeur spécifique par une autre."""
+        if column in self.df.columns:
+            self.df[column] = self.df[column].replace(old, new)
+        self._log_step("replace_values", {"column": column, "old": old, "new": new})
+        return self
+
+
+    def promote_header(self, row_index: int = 0):
+        """Définit une ligne comme header et tronque le DataFrame."""
+        raw_header = self.df.iloc[row_index].values
+
+        new_columns = []
+        for idx, val in enumerate(raw_header):
+            if pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan":
+                new_columns.append(f"__col_{idx}__")
+            else:
+                new_columns.append(str(val).strip())
+
+        # R3: Deduplicate column names
+        seen = {}
+        for i, name in enumerate(new_columns):
+            if name in seen:
+                seen[name] += 1
+                new_columns[i] = f"{name}_{seen[name]}"
+            else:
+                seen[name] = 0
+
+        self.df.columns = new_columns
+        self.df = self.df.iloc[row_index + 1:].reset_index(drop=True)
+        
+        self._log_step("promote_header", {"row_index": row_index, "cleaned_columns": new_columns})
+        return self
+    
+    def flatten_header(self, start_row: int, end_row: int, separator: str = " "):
+        """
+        Aplatit un header multi-lignes en une seule ligne de colonnes.
+        Gère la propagation (ffill) pour les hiérarchies et concatène les niveaux.
+        """
+        header_slice = self.df.iloc[start_row : end_row + 1].copy()
+        
+        header_slice = header_slice.replace([None, "nan", "NaN"], np.nan)
+        
+        # Forward fill : Si A1="Dates" et A2 est vide, A2 devient "Dates" (utile pour hiérarchie)
+        header_slice = header_slice.ffill(axis=0).fillna("")
+        
+        # 3. Concaténation verticale (Aplatissement)
+        new_columns = []
+        for col_idx in range(header_slice.shape[1]):
+            col_values = header_slice.iloc[:, col_idx].astype(str).tolist()
+            clean_values = []
+            for v in col_values:
+                v = v.strip()
+                if (v.lower() == 'nan' or 
+                    v.lower() == 'none' or 
+                    v == '' or 
+                    v.startswith('Unnamed:')): 
+                    continue
+                clean_values.append(v)
+
+            unique_values = []
+            for val in clean_values:
+                if not unique_values or val != unique_values[-1]:
+                    unique_values.append(val)
+            
+            new_col_name = separator.join(unique_values).strip()
+
+            # Fallback si tout est vide (ex: colonne de séparation)
+            if not new_col_name:
+                new_col_name = f"col_{col_idx}"
+
+            new_columns.append(new_col_name)
+
+        # R3: Deduplicate column names
+        seen = {}
+        for i, name in enumerate(new_columns):
+            if name in seen:
+                seen[name] += 1
+                new_columns[i] = f"{name}_{seen[name]}"
+            else:
+                seen[name] = 0
+
+        self.df.columns = new_columns
+        self.df = self.df.iloc[end_row + 1:].reset_index(drop=True)
+        
+        self._log_step("flatten_header", {
+            "start_row": start_row, 
+            "end_row": end_row, 
+            "new_columns": new_columns[:3] # Log aperçu
+        })
+        return self
+
+    def unpivot_data(self, id_vars: List[str], value_vars: List[str], var_name: str, value_name: str):
+        """Pivote les colonnes en lignes (Melt)."""
+        self.df = self.df.melt(
+            id_vars=id_vars, 
+            value_vars=value_vars, 
+            var_name=var_name, 
+            value_name=value_name
+        )
+        self._log_step("unpivot_data", {"id_vars": id_vars, "value_vars": value_vars, "var_name": var_name, "value_name": value_name})
+        return self
+
+    def transpose_table(self):
+        """Transpose le DataFrame (échange lignes et colonnes)."""
+        self.df = self.df.transpose().reset_index(drop=True)
+        self._log_step("transpose_table", {})
+        return self
+
+    def transpose_grid(self, observation_column_name: str = "observation"):
+        """Transpose a grid where variable names are in the first column.
+
+        The first column values become column headers.
+        The original column headers become a data column named observation_column_name.
+        Duplicate column names are suffixed with _1, _2, etc.
+        """
+        first_col = self.df.columns[0]
+        self.df = self.df.set_index(first_col)
+        self.df = self.df.transpose()
+        self.df.index.name = observation_column_name
+        self.df = self.df.reset_index()
+        self.df.columns.name = None
+
+        # Deduplicate column names (same logic as promote_header)
+        cols = [str(c) for c in self.df.columns]
+        seen = {}
+        for i, name in enumerate(cols):
+            if name in seen:
+                seen[name] += 1
+                cols[i] = f"{name}_{seen[name]}"
+            else:
+                seen[name] = 0
+        self.df.columns = cols
+
+        self._log_step("transpose_grid", {"observation_column_name": observation_column_name})
+        return self
+
+    def fill_forward(self, columns: List[str]):
+        """Propage les valeurs vers le bas (corrige les cellules fusionnées).
+        Silently skips columns not present in the DataFrame."""
+        columns = [c for c in columns if c in self.df.columns]
+        if columns:
+            self.df[columns] = self.df[columns].ffill()
+        self._log_step("fill_forward", {"columns": columns})
+        return self
+
+
+    def rename_columns(self, mapping: Dict[str, str]):
+        """Renomme les colonnes selon le mapping fourni."""
+        self.df = self.df.rename(columns=mapping)
+        self._log_step("rename_columns", {"mapping": mapping})
+        return self
+
+    def cast_types(self, mapping: Dict[str, str]):
+        """Applique le typage aux colonnes (float, int, datetime, str)."""
+        for col, dtype in mapping.items():
+            if col in self.df.columns and self.df.columns.tolist().count(col) == 1:
+                try:
+                    if dtype == 'float':
+                        self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
+                    elif dtype == 'int':
+                        self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
+                    elif dtype == 'datetime' or dtype == 'date':
+                        from choregraph.dtype_inference import _detect_dayfirst
+                        dayfirst = _detect_dayfirst(self.df[col].dropna())
+                        self.df[col] = pd.to_datetime(self.df[col], dayfirst=dayfirst, errors='coerce')
+                    else:
+                        self.df[col] = self.df[col].astype(str)
+                except Exception as e:
+                    logger.warning("Could not cast %s to %s: %s", col, dtype, e)
+        self._log_step("cast_types", {"mapping": mapping})
+        return self
+
+    def add_constant(self, column: str, value: Any):
+        """Ajoute une colonne avec une valeur constante."""
+        self.df[column] = value
+        self._log_step("add_constant", {"column": column, "value": value})
+        return self
+
+    def filter_by_keyword(self, column: str, keywords: List[str], exclude: bool = True):
+        """Supprime ou garde les lignes basées sur des mots-clés dans une colonne.
+        Uses case-insensitive literal substring matching (not regex)."""
+        if column in self.df.columns and self.df.columns.tolist().count(column) == 1:
+            col_lower = self.df[column].astype(str).str.lower().fillna("")
+            mask = col_lower.apply(
+                lambda v: any(kw.lower() in v for kw in keywords)
+            )
+            self.df = self.df[~mask] if exclude else self.df[mask]
+        self._log_step("filter_by_keyword", {"column": column, "keywords": keywords, "exclude": exclude})
+        return self
+
+    def drop_trailing_summary_rows(self, identity_columns: List[str]):
+        """Remove trailing rows where all identity columns are NaN/empty.
+
+        Scans upward from the last row and removes consecutive rows where every
+        identity column is NaN, empty, or whitespace-only.  Stops at the first
+        row that has at least one non-empty identity value.
+        """
+        if not identity_columns:
+            return self
+        # Resolve to column positions (avoids issues with duplicate column names)
+        col_positions = []
+        for c in identity_columns:
+            if c in self.df.columns:
+                idx = self.df.columns.tolist().index(c)
+                col_positions.append(idx)
+        if not col_positions:
+            return self
+
+        drop_from = len(self.df)
+        for i in range(len(self.df) - 1, -1, -1):
+            all_empty = True
+            for pos in col_positions:
+                v = self.df.iloc[i, pos]
+                if not (pd.isna(v) or str(v).strip() == "" or str(v).lower() == "nan"):
+                    all_empty = False
+                    break
+            if all_empty:
+                drop_from = i
+            else:
+                break
+
+        if drop_from < len(self.df):
+            removed = len(self.df) - drop_from
+            self.df = self.df.iloc[:drop_from].reset_index(drop=True)
+            logger.info("drop_trailing_summary_rows: removed %d trailing row(s)", removed)
+
+        self._log_step("drop_trailing_summary_rows", {"identity_columns": identity_columns})
+        return self
+
+    def get_result(self):
+        """Retourne le DataFrame transformé."""
+        return self.df
+    
+    def get_execution_log(self):
+        """Retourne le log d'exécution pour le debugging."""
+        return self.execution_log
+
+# =============================================================================
+# ETL COMPILER - Traduction déterministe du RegionMapping en Pipeline
+# =============================================================================
+# 
+# Ce module est le CŒUR de l'approche déclarative.
+# Il reçoit un RegionMapping (description sémantique) et produit un 
+# TransformationPipeline (séquence d'opérations Pandas).
+#
+# AUCUNE IA N'EST UTILISÉE ICI - c'est un algorithme déterministe.
+# =============================================================================
+
+def generate_column_range(start_col: str, end_col: str) -> List[str]:
+    """
+    Génère la liste des lettres de colonnes Excel entre start et end (inclus).
+    
+    Exemples:
+        generate_column_range("B", "E") → ["B", "C", "D", "E"]
+        generate_column_range("A", "A") → ["A"]
+        generate_column_range("Y", "AB") → ["Y", "Z", "AA", "AB"]
+    """
+    start_idx = column_index_from_string(start_col)
+    end_idx = column_index_from_string(end_col)
+    
+    return [get_column_letter(i) for i in range(start_idx, end_idx + 1)]
+
+
+def compile_region_mapping_to_pipeline(
+    mapping: RegionMapping, 
+    table_structure: TableStructure,
+    df_raw: pd.DataFrame  # <--- NOUVEL ARGUMENT
+) -> TransformationPipeline:
+    """
+    COMPILATEUR ETL - Traduit un RegionMapping en TransformationPipeline.
+    VERSION CORRIGÉE : Résout les noms de colonnes dynamiquement.
+    """
+    steps = []
+
+    # --- Sub-table offset: full_range may not start at row 1 ---
+    fr_min_col, fr_min_row, fr_max_col, fr_max_row = range_boundaries(table_structure.full_range.range)
+
+    # --- COLUMN NAME RESOLUTION ---
+    # Predict what column names will look like AFTER header promotion/flattening.
+    # This is critical for generating correct rename/melt steps.
+    col_letter_to_target_key = {}
+    current_excel_letters = [str(col) for col in df_raw.columns]  # A, B, C...
+
+    is_multi_row = (table_structure.header_complexity == "multi_row" and table_structure.header_range is not None)
+
+    if is_multi_row:
+        # Simulate flatten_header to predict output column names
+        hr_min_col, hr_min_row, hr_max_col, hr_max_row = range_boundaries(table_structure.header_range.range)
+        # Indices relative to sub-table (which starts at fr_min_row)
+        start_idx = hr_min_row - fr_min_row
+        end_idx = hr_max_row - fr_min_row
+
+        header_slice = df_raw.iloc[start_idx: end_idx + 1].copy()
+        header_slice = header_slice.replace([None, "nan", "NaN"], np.nan)
+        header_slice = header_slice.ffill(axis=0).fillna("")
+
+        for col_idx in range(min(header_slice.shape[1], len(current_excel_letters))):
+            col_values = header_slice.iloc[:, col_idx].astype(str).tolist()
+            clean_values = []
+            for v in col_values:
+                v = v.strip()
+                if v.lower() in ('nan', 'none', '') or v.startswith('Unnamed:'):
+                    continue
+                clean_values.append(v)
+            unique_values = []
+            for val in clean_values:
+                if not unique_values or val != unique_values[-1]:
+                    unique_values.append(val)
+            predicted_name = " ".join(unique_values).strip()
+            if not predicted_name:
+                predicted_name = f"col_{col_idx}"
+            col_letter_to_target_key[current_excel_letters[col_idx]] = predicted_name
+
+        # Deduplicate (mirror flatten_header R3 logic)
+        seen = {}
+        for letter in current_excel_letters:
+            if letter not in col_letter_to_target_key:
+                continue
+            name = col_letter_to_target_key[letter]
+            if name in seen:
+                seen[name] += 1
+                col_letter_to_target_key[letter] = f"{name}_{seen[name]}"
+            else:
+                seen[name] = 0
+
+    elif mapping.header_row_index is not None:
+        header_values = df_raw.iloc[mapping.header_row_index].tolist()
+        for idx, (letter, val) in enumerate(zip(current_excel_letters, header_values)):
+            is_empty = pd.isna(val) or str(val).strip() == "" or str(val).lower() == "nan"
+            if is_empty:
+                safe_key = f"__col_{idx}__"
+            else:
+                safe_key = str(val).strip()
+            col_letter_to_target_key[letter] = safe_key
+    else:
+        for letter in current_excel_letters:
+            col_letter_to_target_key[letter] = letter
+
+    # =========================================================================
+    # STEP 0: Header handling (Simple vs Multi-row)
+    # =========================================================================
+
+    if is_multi_row:
+        hr_min_col, hr_min_row, hr_max_col, hr_max_row = range_boundaries(table_structure.header_range.range)
+        # Indices relative to sub-table (which starts at fr_min_row)
+        start_idx = hr_min_row - fr_min_row
+        end_idx = hr_max_row - fr_min_row
+
+        steps.append(TransformationStep(
+            function_name="flatten_header",
+            arguments={"start_row": start_idx, "end_row": end_idx, "separator": " "}
+        ))
+        mapping.header_row_index = None
+
+    elif mapping.header_row_index is not None:
+        steps.append(TransformationStep(
+            function_name="promote_header",
+            arguments={"row_index": mapping.header_row_index}
+        ))
+    
+    # =========================================================================
+    # ÉTAPE 1: Nettoyage initial
+    # =========================================================================
+    steps.append(TransformationStep(
+        function_name="drop_empty_rows",
+        arguments={"threshold": 0.8}
+    ))
+
+    # =========================================================================
+    # ÉTAPE 1b: Enforce data_range boundary (clip rows beyond Cartographer's
+    # declared data region). Runs after header promotion and drop_empty_rows.
+    # =========================================================================
+    dr_min_col, dr_min_row, dr_max_col, dr_max_row = range_boundaries(table_structure.data_range.range)
+    data_row_count = dr_max_row - dr_min_row + 1
+
+    if dr_max_row < fr_max_row:
+        steps.append(TransformationStep(
+            function_name="clip_rows",
+            arguments={"max_rows": data_row_count}
+        ))
+
+    # =========================================================================
+    # PATTERN: FLAT_LIST
+    # =========================================================================
+    if mapping.pattern == "flat_list":
+        rename_map = {}
+        type_map = {}
+        
+        for ref in mapping.anchors.columns:
+            source_name = col_letter_to_target_key.get(ref.col_idx, ref.col_idx) 
+            rename_map[source_name] = ref.semantic_name
+            type_map[ref.semantic_name] = ref.data_type
+        
+        if rename_map:
+            steps.append(TransformationStep(
+                function_name="rename_columns",
+                arguments={"mapping": rename_map}
+            ))
+        
+        if type_map:
+            steps.append(TransformationStep(
+                function_name="cast_types",
+                arguments={"mapping": type_map}
+            ))
+    
+    # =========================================================================
+    # PATTERN: CROSS_TAB
+    # =========================================================================
+    elif mapping.pattern == "cross_tab":
+        if mapping.pivot_axis is None or not mapping.value_body:
+            raise ValueError("cross_tab pattern requires pivot_axis and value_body")
+
+        # Normalise value_body to list (backward compat)
+        value_zones = mapping.value_body
+
+        # 1. Identifier les colonnes à pivoter (Lettres Excel)
+        pivot_letters = generate_column_range(
+            mapping.pivot_axis.col_range_start,
+            mapping.pivot_axis.col_range_end
+        )
+
+        # 2. Traduire les lettres en VRAIS noms de colonnes (post-promote)
+        value_vars_resolved = [col_letter_to_target_key.get(letter, letter) for letter in pivot_letters]
+
+        # 3. Préparer le renommage des ancres
+        anchor_rename_map = {}
+        for ref in mapping.anchors.columns:
+            source_name = col_letter_to_target_key.get(ref.col_idx, ref.col_idx)
+            anchor_rename_map[source_name] = ref.semantic_name
+
+        if anchor_rename_map:
+            steps.append(TransformationStep(
+                function_name="rename_columns",
+                arguments={"mapping": anchor_rename_map}
+            ))
+
+        id_vars = [ref.semantic_name for ref in mapping.anchors.columns]
+
+        # Use the first ValueZone for the melt (single-measure case)
+        primary_vz = value_zones[0]
+
+        steps.append(TransformationStep(
+            function_name="unpivot_data",
+            arguments={
+                "id_vars": id_vars,
+                "value_vars": value_vars_resolved,
+                "var_name": mapping.pivot_axis.target_name,
+                "value_name": primary_vz.target_name
+            }
+        ))
+
+        # Filtrage — apply to ALL string anchor columns (not just first)
+        if mapping.rows_to_exclude_keywords:
+            string_anchors = [
+                ref.semantic_name for ref in mapping.anchors.columns
+                if ref.data_type == "string"
+            ]
+            for col_name in string_anchors:
+                steps.append(TransformationStep(
+                    function_name="filter_by_keyword",
+                    arguments={
+                        "column": col_name,
+                        "keywords": mapping.rows_to_exclude_keywords,
+                        "exclude": True
+                    }
+                ))
+
+        # Typage
+        type_map = {}
+        for ref in mapping.anchors.columns:
+            type_map[ref.semantic_name] = ref.data_type
+        type_map[mapping.pivot_axis.target_name] = mapping.pivot_axis.extracted_type
+        for vz in value_zones:
+            type_map[vz.target_name] = vz.data_type
+
+        steps.append(TransformationStep(
+            function_name="cast_types",
+            arguments={"mapping": type_map}
+        ))
+    
+    # =========================================================================
+    # PATTERN: TRANSPOSED_GRID (table transposée)
+    # =========================================================================
+    elif mapping.pattern == "transposed_grid":
+        # The first column contains variable NAMES (e.g., Revenue, COGS, ...).
+        # The column headers are OBSERVATIONS (e.g., FY '09, FY '10, ...).
+        # After transpose: variable names become columns, observations become rows,
+        # and the original column headers become a data column (observation identifier).
+        #
+        # Input:  |            | FY '09 | FY '10 | FY '11 |
+        #         | Revenue    | 30990  | 35119  | 46542  |
+        #         | COGS       | 11088  | 12693  | 18215  |
+        #
+        # Output: | fiscal_year | Revenue | COGS  |
+        #         | FY '09      | 30990   | 11088 |
+        #         | FY '10      | 35119   | 12693 |
+        #         | FY '11      | 46542   | 18215 |
+
+        # Determine observation column name from pivot_axis or default
+        obs_col_name = "observation"
+        if mapping.pivot_axis and mapping.pivot_axis.target_name:
+            obs_col_name = mapping.pivot_axis.target_name
+
+        steps.append(TransformationStep(
+            function_name="transpose_grid",
+            arguments={"observation_column_name": obs_col_name}
+        ))
+
+        steps.append(TransformationStep(
+            function_name="drop_empty_rows",
+            arguments={"threshold": 0.8}
+        ))
+
+        # Filter out totals/subtotals if specified
+        if mapping.rows_to_exclude_keywords:
+            steps.append(TransformationStep(
+                function_name="filter_by_keyword",
+                arguments={
+                    "column": obs_col_name,
+                    "keywords": mapping.rows_to_exclude_keywords,
+                    "exclude": True
+                }
+            ))
+    
+    # =========================================================================
+    # PATTERN: FORM (clé-valeur)
+    # =========================================================================
+    elif mapping.pattern == "form":
+        if mapping.form_mapping is None:
+            raise ValueError("form pattern requires form_mapping")
+
+        key_col = mapping.form_mapping.key_column
+        val_col = mapping.form_mapping.value_column
+
+        # Resolve column names after potential header promotion
+        key_col_name = col_letter_to_target_key.get(key_col, key_col)
+        val_col_name = col_letter_to_target_key.get(val_col, val_col)
+
+        # Select key and value columns to isolate the form data
+        steps.append(TransformationStep(
+            function_name="select_columns",
+            arguments={"names": [key_col_name, val_col_name]}
+        ))
+
+        # Drop empty rows from the form
+        steps.append(TransformationStep(
+            function_name="drop_empty_rows",
+            arguments={"threshold": 0.5}
+        ))
+
+        # Transpose to get keys as column headers
+        steps.append(TransformationStep(
+            function_name="transpose_table",
+            arguments={}
+        ))
+
+        steps.append(TransformationStep(
+            function_name="promote_header",
+            arguments={"row_index": 0}
+        ))
+
+    # =========================================================================
+    # AUTO-GENERATED FINAL STEPS
+    # Applied to ALL patterns after pattern-specific steps.
+    # =========================================================================
+
+    # D0: Filter out total/subtotal rows for patterns that didn't handle it
+    # already (cross_tab and transposed_grid handle it in their own sections).
+    # Applies filter_by_keyword to ALL string anchor columns.
+    if mapping.rows_to_exclude_keywords and mapping.pattern in ("flat_list", "form"):
+        if mapping.anchors and mapping.anchors.columns:
+            string_anchors = [
+                ref.semantic_name for ref in mapping.anchors.columns
+                if ref.data_type == "string"
+            ]
+            for col_name in string_anchors:
+                steps.append(TransformationStep(
+                    function_name="filter_by_keyword",
+                    arguments={
+                        "column": col_name,
+                        "keywords": mapping.rows_to_exclude_keywords,
+                        "exclude": True
+                    }
+                ))
+
+    # D1: Auto-generate clean_text for string anchor columns.
+    # Uses semantic names (post-rename). Skipped for form/transposed_grid
+    # where column names are unpredictable after transpose.
+    if mapping.pattern not in ("form", "transposed_grid"):
+        string_cols = [
+            ref.semantic_name for ref in mapping.anchors.columns
+            if ref.data_type == "string"
+        ]
+        if string_cols:
+            steps.append(TransformationStep(
+                function_name="clean_text",
+                arguments={"columns": string_cols, "ops": ["strip"]}
+            ))
+
+    # D2: REMOVED — drop_trailing_summary_rows was a fragile heuristic that
+    # failed when any identity column had a partial value (e.g., vehicle count
+    # in modele column). Replaced by defense-in-depth:
+    #   - clip_rows (Step 1b): enforces Cartographer's data_range boundary
+    #   - filter_by_keyword on ALL string anchors: catches subtotals within range
+    # The drop_trailing_summary_rows() method is kept in TidyEngine for compat.
+
+    # NOTE: fill_forward removed — merged cells are already filled by
+    # the encoder's unmerge_and_fill_cells() before DataFrame construction.
+    # NOTE: select_columns removed — the mapper doesn't always describe
+    # every column in anchors, so pruning would silently drop data.
+
+    return TransformationPipeline(steps=steps)
+
+
+# =============================================================================
+# PIPELINE EXECUTOR - Exécution avec gestion d'erreurs détaillée
+# =============================================================================
+
+def execute_pipeline(pipeline: TransformationPipeline, df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Exécute le TransformationPipeline sur le DataFrame.
+    
+    Gère les erreurs et retourne un rapport détaillé en cas d'échec.
+    Ce rapport peut être utilisé pour le retry avec feedback.
+    
+    Args:
+        pipeline: TransformationPipeline à exécuter
+        df: DataFrame source
+        
+    Returns:
+        Dict avec:
+        - status: "success" ou "retry"
+        - final_df: DataFrame résultant (si success)
+        - errors: Liste d'erreurs détaillées (si retry)
+        - failed_step: Index de l'étape qui a échoué
+        - current_columns: Colonnes au moment de l'échec
+    """
+    engine = TidyEngine(df)
+    current_step_idx = 0
+    current_step = None
+    
+    try:
+        for idx, step in enumerate(pipeline.steps):
+            current_step_idx = idx
+            current_step = step
+
+            func = getattr(engine, step.function_name)
+            func(**step.arguments)
+
+        result_df = engine.get_result()
+
+        # D5: Post-processing validation
+        warnings = []
+        if result_df.empty:
+            msg = "Result DataFrame is empty (0 rows) — pipeline produced no data"
+            logger.warning("Post-validation: %s", msg)
+            return {
+                "errors": [msg],
+                "status": "retry",
+                "failed_step": len(pipeline.steps),
+                "failed_function": "post_validation",
+                "current_columns": list(result_df.columns),
+                "current_shape": result_df.shape,
+            }
+        unnamed = [c for c in result_df.columns if str(c).startswith("Unnamed:") or str(c).startswith("__col_")]
+        if unnamed:
+            warnings.append(f"Unnamed columns remain: {unnamed}")
+        all_nan_cols = [c for c in result_df.columns if result_df.columns.tolist().count(c) == 1 and result_df[c].isna().all()]
+        if all_nan_cols:
+            warnings.append(f"All-NaN columns: {all_nan_cols}")
+        for w in warnings:
+            logger.warning("Post-validation: %s", w)
+
+        return {"final_df": result_df, "status": "success", "warnings": warnings}
+    
+    except Exception as e:
+        # Construction du rapport d'erreur détaillé
+        error_type = type(e).__name__
+        error_msg = str(e)
+        tb = traceback.format_exc()
+        
+        # État actuel du DataFrame
+        current_columns = list(engine.df.columns)
+        current_shape = engine.df.shape
+        
+        # Échantillon des valeurs des colonnes
+        col_samples = {}
+        for col in current_columns[:5]:
+            try:
+                sample = engine.df[col].dropna().head(3).tolist()
+                col_samples[str(col)] = sample
+            except:
+                col_samples[str(col)] = ["<error reading>"]
+        
+        # Message d'erreur formaté pour le feedback
+        detailed_error = f"""
+╔══════════════════════════════════════════════════════════════════╗
+║                    PIPELINE EXECUTION ERROR                       ║
+╠══════════════════════════════════════════════════════════════════╣
+║ FAILED AT STEP {current_step_idx + 1}/{len(pipeline.steps)}
+║ Function: {current_step.function_name if current_step else 'N/A'}
+║ Arguments: {current_step.arguments if current_step else 'N/A'}
+╠══════════════════════════════════════════════════════════════════╣
+║ ERROR TYPE: {error_type}
+║ ERROR MESSAGE: {error_msg}
+╠══════════════════════════════════════════════════════════════════╣
+║ DATAFRAME STATE AT FAILURE:
+║   Shape: {current_shape[0]} rows × {current_shape[1]} columns
+║   Columns: {current_columns}
+║   Column samples: {col_samples}
+╠══════════════════════════════════════════════════════════════════╣
+║ SUCCESSFULLY EXECUTED STEPS:
+"""
+        for log_entry in engine.get_execution_log():
+            cols_preview = log_entry['columns_after'][:5]
+            cols_str = str(cols_preview) + ('...' if len(log_entry['columns_after']) > 5 else '')
+            detailed_error += f"║   Step {log_entry['step']}: {log_entry['function']} → cols={cols_str}\n"
+        
+        if not engine.get_execution_log():
+            detailed_error += "║   (No steps completed successfully)\n"
+            
+        detailed_error += f"""╠══════════════════════════════════════════════════════════════════╣
+║ TRACEBACK:
+{tb}
+╚══════════════════════════════════════════════════════════════════╝
+"""
+        
+        logger.error("Pipeline execution failed:\n%s", detailed_error)
+
+        return {
+            "errors": [detailed_error], 
+            "status": "retry",
+            "failed_step": current_step_idx,
+            "failed_function": current_step.function_name if current_step else None,
+            "current_columns": current_columns,
+            "current_shape": current_shape
+        }
+
