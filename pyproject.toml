@@ -80,6 +80,5 @@ where = ["src"]
 [tool.setuptools.package-data]
 choregraph = ["*.xsd", "assets/**/*"]
 
-# XSD files are included for server-side installs.
-# Compiled wheels strip them via CleanBuildExt in setup.py.
+# XSD and asset files are included in the (pure-Python) wheel.
 

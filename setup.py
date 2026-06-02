@@ -5,7 +5,7 @@
 from pathlib import Path
 from setuptools import setup
 
-_version_file = Path(__file__).resolve().parent.parent / "VERSION"
+_version_file = Path(__file__).resolve().parent / "VERSION"
 _version = _version_file.read_text().strip() if _version_file.exists() else "0.0.0"
 
 setup(version=_version)
