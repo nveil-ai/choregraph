@@ -78,7 +78,7 @@ Full walkthrough → **[docs.nveil.com](https://docs.nveil.com)**.
 
 ## Part of NVEIL
 
-Choregraph is one of the open-source engines of the **[NVEIL platform](https://github.com/nveil-ai/nveil)**. Most people reach it through the [NVEIL Toolkit](https://github.com/nveil-ai/nveil-toolkit) (`pip install nveil`) or the platform itself — but Choregraph stands on its own for anyone who wants a programmable, XML-portable data-processing engine. Its results export straight to [DIVE](https://github.com/nveil-ai/dive) for visualization.
+Choregraph is one of the open-source engines of the **[NVEIL platform](https://github.com/nveil-ai/nveil)**. Most people reach it through the [NVEIL Toolkit](https://github.com/nveil-ai/nveil-toolkit) (`pip install nveil`) or the platform itself — but Choregraph stands on its own for anyone who wants a programmable, XML-portable data-processing engine. Its results feed the NVEIL platform's visualization engine.
 
 ## Contributing
 
