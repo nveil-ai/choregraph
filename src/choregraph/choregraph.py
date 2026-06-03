@@ -195,12 +195,9 @@ class Choregraph:
         return self._catalog_instance
 
     def get_xsd(self) -> str:
-        """Get the XSD content as a string."""
+        """Get the XSD content as a string (bundled with the package)."""
         xsd_path = Path(__file__).parent / "TransformGraph.xsd"
-        if xsd_path.exists():
-            return xsd_path.read_text(encoding="utf-8")
-        from ._xsd_data import get_transformgraph_xsd
-        return get_transformgraph_xsd()
+        return xsd_path.read_text(encoding="utf-8")
     
     def run(self, lazy: bool = True) -> Tuple[bool, str]:
         """Execute the pipeline using a Kedro session.

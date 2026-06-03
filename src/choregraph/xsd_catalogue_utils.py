@@ -231,12 +231,8 @@ def load_function_catalogue_from_xsd(xsd_path: Path = None) -> Dict[str, Any]:
     if _catalogue_cache is not None and _xsd_mtime == current_mtime:
         return _catalogue_cache
 
-    # Parse XSD — file first (dev), embedded fallback (compiled)
-    if xsd_path.exists():
-        tree = etree.parse(str(xsd_path))
-    else:
-        from ._xsd_data import get_transformgraph_xsd
-        tree = etree.fromstring(get_transformgraph_xsd().encode("utf-8"))
+    # Parse the bundled XSD
+    tree = etree.parse(str(xsd_path))
     root = tree if isinstance(tree, etree._Element) else tree.getroot()
     
     functions = {}
