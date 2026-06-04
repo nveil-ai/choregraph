@@ -49,8 +49,6 @@ TABLE_PROCESSING_TIMEOUT = 300  # Max time to process one table (including all r
 # reads the ai_service provider yaml files (the single source of truth,
 # shared with CSV characterization and the ai_service). Excel tidying uses
 # the main `defaults:` profile (a richer model than CSV's cheap `minimal:`).
-# The aliases below preserve the historical import surface used elsewhere
-# in choregraph (e.g. collection/library_excel.py).
 from ...llm_config import (
     PROVIDER_ENV_KEY as _PROVIDER_ENV_KEY,
     build_chat_model,

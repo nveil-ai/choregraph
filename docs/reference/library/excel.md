@@ -1,10 +1,12 @@
 # Excel Transforms
 
-LLM-assisted Excel data tidying. Uses Google Gemini to analyze messy Excel spreadsheet
-layouts and restructure them into tidy DataFrames. Handles multi-table detection via
-flood-fill, column mapping with Excel coordinates, transposition, and melting.
+LLM-assisted Excel data tidying. Encodes each spreadsheet sheet into a compact
+textual form, then uses an LLM cartographer to locate the tables and a
+structural mapper to restructure each one into a tidy DataFrame. The provider
+and model are auto-detected via `choregraph.llm_config` (shared with the
+ai_service); ai_service passes them explicitly.
 
-::: choregraph.collection.library_excel
+::: choregraph.collection.excel.main
     options:
       members_order: source
       show_source: true

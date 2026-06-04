@@ -18,7 +18,6 @@ import numpy as np
 from typing import Any, Dict, Union, Optional
 import json
 
-# from .collection.library_excel import *
 try:
     from .collection.excel.main import tidy_excel_data
 except ImportError:
@@ -1127,7 +1126,8 @@ def discretize(df: pd.DataFrame, column: str, bins: int = 5,
 # =============================================================================
 # EXCEL OPERATIONS
 # =============================================================================
-# Redundant analyze_excel_structure removed (imported from .library_excel)
+# tidy_excel_data lives in collection/excel/ and is imported at the top of
+# this module; it is registered in TRANSFORM_REGISTRY below.
 
 
 # =============================================================================
