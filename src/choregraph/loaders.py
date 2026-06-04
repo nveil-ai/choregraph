@@ -21,7 +21,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,27 @@ logger = logging.getLogger(__name__)
 
 # Timeout for a single LLM characterization call (seconds).
 LLM_CSV_TIMEOUT = 60
+
+
+# Optional service-registered delegate for the CSV LLM characterization step.
+# file_service registers one (see :func:`set_csv_llm_delegate`) that calls the
+# ai_service ``/ai/characterize_csv`` endpoint, so the LLM runs server-side and
+# file_service stays credential-free. When unset, :func:`characterize_csv`
+# simply skips the LLM step (the underlying :func:`_llm_characterize_csv` is
+# then only reached through that ai_service endpoint).
+_csv_llm_delegate: Optional[Callable[[List[str]], Optional[dict]]] = None
+
+
+def set_csv_llm_delegate(
+    fn: Optional[Callable[[List[str]], Optional[dict]]],
+) -> None:
+    """Register (or clear with ``None``) the CSV LLM characterization delegate.
+
+    The delegate takes the file's first sample lines and returns the same dict
+    shape as :func:`_llm_characterize_csv` (or ``None`` on failure).
+    """
+    global _csv_llm_delegate
+    _csv_llm_delegate = fn
 
 
 # ---------------------------------------------------------------------------
@@ -333,9 +354,17 @@ def characterize_csv(filepath: str) -> dict:
     non-data preamble lines.  When the ``csv.Sniffer`` heuristic fails,
     detects a separator outside the usual set ``[; , \\t |]``, **or**
     produces inconsistent column counts across rows, the function
-    attempts to characterize the file via an LLM call (Google Gemini).
+    attempts to characterize the file via an LLM.
     If the LLM is unavailable or also fails, safe fallback values are
     returned.
+
+    The LLM step always runs *server-side*: a service registers a delegate via
+    :func:`set_csv_llm_delegate` (file_service registers one that calls the
+    ai_service ``/ai/characterize_csv`` endpoint, the same pattern as Excel
+    tidying via ``/ai/preprocess_excel``), keeping provider credentials confined
+    to the ai_service.  When no delegate is registered (e.g. ``metadata`` stat
+    reading, or a standalone call), the LLM step is simply skipped and the
+    heuristic / safe-default values are returned.
 
     Args:
         filepath: Path to the CSV file.
@@ -344,6 +373,12 @@ def characterize_csv(filepath: str) -> dict:
         Dict with keys ``header``, ``fieldSeparator``, ``recordSeparator``,
         ``skipLines``, ``modified``.
     """
+    def run_llm_fallback(sample_lines: List[str]) -> Optional[dict]:
+        # Single LLM path: the registered server-side delegate, or nothing.
+        if _csv_llm_delegate is None:
+            logger.debug("characterize_csv: no CSV LLM delegate registered — skipping LLM step")
+            return None
+        return _csv_llm_delegate(sample_lines)
     result = {
         "header": False,
         "fieldSeparator": None,
@@ -410,7 +445,7 @@ def characterize_csv(filepath: str) -> dict:
     except Exception:
         # Heuristic failed entirely — try LLM fallback before returning defaults.
         logger.debug("characterize_csv: Sniffer failed — attempting LLM fallback")
-        llm_result = _llm_characterize_csv(sample_lines)
+        llm_result = run_llm_fallback(sample_lines)
         if llm_result is not None:
             logger.info("characterize_csv: using LLM characterization result")
             result = llm_result
@@ -428,7 +463,7 @@ def characterize_csv(filepath: str) -> dict:
             "characterize_csv: unusual separator %r detected — attempting LLM fallback",
             result["fieldSeparator"],
         )
-        llm_result = _llm_characterize_csv(sample_lines)
+        llm_result = run_llm_fallback(sample_lines)
         if llm_result is not None:
             logger.info("characterize_csv: using LLM characterization for unusual separator")
             result = llm_result
@@ -464,7 +499,7 @@ def characterize_csv(filepath: str) -> dict:
                 logger.info(
                     "characterize_csv: no alternative separator found — attempting LLM fallback"
                 )
-                llm_result = _llm_characterize_csv(sample_lines)
+                llm_result = run_llm_fallback(sample_lines)
                 if llm_result is not None:
                     logger.info(
                         "characterize_csv: using LLM characterization after consistency check failure"

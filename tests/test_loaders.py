@@ -181,8 +181,22 @@ def test_characterize_csv_nonexistent_file(tmp_path: Path):
 # Tests for LLM fallback in characterize_csv
 # ---------------------------------------------------------------------------
 
+import pytest
 from unittest.mock import patch, MagicMock
-from choregraph.loaders import _llm_characterize_csv, LLMCsvCharacterization
+from choregraph.loaders import _llm_characterize_csv, set_csv_llm_delegate
+
+
+@pytest.fixture(autouse=True)
+def _reset_csv_llm_delegate():
+    """Ensure no registered CSV LLM delegate leaks between tests.
+
+    characterize_csv delegates its LLM step to whatever was registered via
+    set_csv_llm_delegate (file_service registers an ai_service HTTP call).
+    Tests register a MagicMock instead; reset it around every test.
+    """
+    set_csv_llm_delegate(None)
+    yield
+    set_csv_llm_delegate(None)
 
 
 def test_llm_fallback_called_when_sniffer_fails(tmp_path: Path):
@@ -191,21 +205,17 @@ def test_llm_fallback_called_when_sniffer_fails(tmp_path: Path):
     csv_path = tmp_path / "tilde.csv"
     csv_path.write_text("name~age~city\nAlice~30~Paris\nBob~25~London\n", encoding="utf-8")
 
-    fake_response = LLMCsvCharacterization(
-        header=True, fieldSeparator="~", recordSeparator="\n", skipLines=0
-    )
+    mock_delegate = MagicMock(return_value={
+        "header": True,
+        "fieldSeparator": "~",
+        "recordSeparator": "\n",
+        "skipLines": 0,
+        "modified": False,
+    })
+    set_csv_llm_delegate(mock_delegate)
+    result = characterize_csv(str(csv_path))
 
-    with patch("choregraph.loaders._llm_characterize_csv") as mock_llm:
-        mock_llm.return_value = {
-            "header": True,
-            "fieldSeparator": "~",
-            "recordSeparator": "\n",
-            "skipLines": 0,
-            "modified": False,
-        }
-        result = characterize_csv(str(csv_path))
-
-    mock_llm.assert_called_once()
+    mock_delegate.assert_called_once()
     assert result["fieldSeparator"] == "~"
     assert result["header"] is True
 
@@ -225,18 +235,18 @@ def test_llm_fallback_called_when_unusual_separator_detected(tmp_path: Path):
         dialect.delimiter = "~"
         return dialect
 
+    mock_delegate = MagicMock(return_value={
+        "header": True,
+        "fieldSeparator": ",",
+        "recordSeparator": "\n",
+        "skipLines": 0,
+        "modified": False,
+    })
     with patch.object(csv.Sniffer, "sniff", patched_sniff):
-        with patch("choregraph.loaders._llm_characterize_csv") as mock_llm:
-            mock_llm.return_value = {
-                "header": True,
-                "fieldSeparator": ",",
-                "recordSeparator": "\n",
-                "skipLines": 0,
-                "modified": False,
-            }
-            result = characterize_csv(str(csv_path))
+        set_csv_llm_delegate(mock_delegate)
+        result = characterize_csv(str(csv_path))
 
-    mock_llm.assert_called_once()
+    mock_delegate.assert_called_once()
     assert result["fieldSeparator"] == ","
 
 
@@ -245,9 +255,11 @@ def test_safe_fallback_when_both_sniffer_and_llm_fail(tmp_path: Path):
     csv_path = tmp_path / "weird.csv"
     csv_path.write_text("name~age~city\nAlice~30~Paris\nBob~25~London\n", encoding="utf-8")
 
-    with patch("choregraph.loaders._llm_characterize_csv", return_value=None):
-        result = characterize_csv(str(csv_path))
+    mock_delegate = MagicMock(return_value=None)
+    set_csv_llm_delegate(mock_delegate)
+    result = characterize_csv(str(csv_path))
 
+    mock_delegate.assert_called_once()
     # Should return safe fallback values
     assert result["header"] is True
     assert result["fieldSeparator"] == ","
@@ -259,10 +271,11 @@ def test_llm_not_called_for_usual_separator(tmp_path: Path):
     csv_path = tmp_path / "normal.csv"
     csv_path.write_text("name,age,city\nAlice,30,Paris\nBob,25,London\n", encoding="utf-8")
 
-    with patch("choregraph.loaders._llm_characterize_csv") as mock_llm:
-        result = characterize_csv(str(csv_path))
+    mock_delegate = MagicMock()
+    set_csv_llm_delegate(mock_delegate)
+    result = characterize_csv(str(csv_path))
 
-    mock_llm.assert_not_called()
+    mock_delegate.assert_not_called()
     assert result["fieldSeparator"] == ","
 
 
@@ -329,19 +342,19 @@ def test_llm_fallback_on_inconsistent_columns(tmp_path: Path):
         encoding="utf-8",
     )
 
+    mock_delegate = MagicMock(return_value={
+        "header": True,
+        "fieldSeparator": ";",
+        "recordSeparator": "\n",
+        "skipLines": 0,
+        "modified": False,
+    })
     with patch("choregraph.loaders._check_column_consistency", return_value=False):
         with patch("choregraph.loaders._find_best_separator", return_value=None):
-            with patch("choregraph.loaders._llm_characterize_csv") as mock_llm:
-                mock_llm.return_value = {
-                    "header": True,
-                    "fieldSeparator": ";",
-                    "recordSeparator": "\n",
-                    "skipLines": 0,
-                    "modified": False,
-                }
-                result = characterize_csv(str(csv_path))
+            set_csv_llm_delegate(mock_delegate)
+            result = characterize_csv(str(csv_path))
 
-    mock_llm.assert_called_once()
+    mock_delegate.assert_called_once()
     assert result["fieldSeparator"] == ";"
 
 
@@ -351,10 +364,11 @@ def test_no_llm_when_columns_are_consistent(tmp_path: Path):
     csv_path = tmp_path / "clean.csv"
     csv_path.write_text("a;b;c\n1;2;3\n4;5;6\n7;8;9\n", encoding="utf-8")
 
-    with patch("choregraph.loaders._llm_characterize_csv") as mock_llm:
-        result = characterize_csv(str(csv_path))
+    mock_delegate = MagicMock()
+    set_csv_llm_delegate(mock_delegate)
+    result = characterize_csv(str(csv_path))
 
-    mock_llm.assert_not_called()
+    mock_delegate.assert_not_called()
     assert result["fieldSeparator"] == ";"
 
 
@@ -364,11 +378,13 @@ def test_consistency_fallback_keeps_sniffer_when_llm_fails(tmp_path: Path):
     csv_path = tmp_path / "noisy.csv"
     csv_path.write_text("a,b,c\n1,2,3\n4,5,6\n", encoding="utf-8")
 
+    mock_delegate = MagicMock(return_value=None)
     with patch("choregraph.loaders._check_column_consistency", return_value=False):
         with patch("choregraph.loaders._find_best_separator", return_value=None):
-            with patch("choregraph.loaders._llm_characterize_csv", return_value=None):
-                result = characterize_csv(str(csv_path))
+            set_csv_llm_delegate(mock_delegate)
+            result = characterize_csv(str(csv_path))
 
+    mock_delegate.assert_called_once()
     # Sniffer result kept as best-effort
     assert result["fieldSeparator"] == ","
 
@@ -410,9 +426,10 @@ def test_re_sniff_picks_alt_separator_without_llm(tmp_path: Path):
         encoding="utf-8",
     )
 
-    with patch("choregraph.loaders._llm_characterize_csv") as mock_llm:
-        result = characterize_csv(str(csv_path))
+    mock_delegate = MagicMock()
+    set_csv_llm_delegate(mock_delegate)
+    result = characterize_csv(str(csv_path))
 
     # LLM should NOT be called — alt separator heuristic should suffice.
-    mock_llm.assert_not_called()
+    mock_delegate.assert_not_called()
     assert result["fieldSeparator"] == ";"
