@@ -3,11 +3,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 site_name: Choregraph
-site_description: "Choregraph — Graph-based data processing library for NVEIL"
+site_description: "Choregraph: graph-based data processing library for NVEIL"
 site_url: ""
 
 theme:
   name: material
+  logo: assets/images/logo.png
+  favicon: assets/images/favicon.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -117,4 +119,4 @@ nav:
     - developer/index.md
     - Adding Transforms: developer/adding-transforms.md
 
-copyright: "Copyright &copy; 2025 NVEIL — Proprietary"
+copyright: "Copyright &copy; 2025 NVEIL · Proprietary"
