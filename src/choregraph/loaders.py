@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .security import safe_path
 # Provider plumbing (model names, native kwargs, boot-order detection and
@@ -66,6 +66,8 @@ def set_csv_llm_delegate(
 
 class LLMCsvCharacterization(BaseModel):
     """Structured output returned by the LLM for CSV characterization."""
+
+    model_config = ConfigDict(extra="forbid")
 
     header: bool = Field(description="True if the first data row is a header.")
     fieldSeparator: str = Field(description="Single-character field delimiter (e.g. ',', ';', '\\t', '|', '~').")

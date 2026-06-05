@@ -16,10 +16,7 @@ import pytest
 from choregraph.library import cartograph_json
 
 
-GRAPH_JSON_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "examples" / "Miscellaneous" / "GRAPH" / "graph.json"
-)
+GRAPH_JSON_PATH = Path(__file__).resolve().parent / "fixtures" / "graph.json"
 
 
 @pytest.fixture(scope="module")
