@@ -82,8 +82,8 @@ Choregraph is one of the open-source engines of the **[NVEIL platform](https://g
 
 ## Contributing
 
-Contributions are welcome under the project's **[Contributor License Agreement](CLA.md)** — signed once, on your first pull request (a license grant, not an assignment; you keep your rights). Bug reports and ideas are welcome via [GitHub Issues](https://github.com/nveil-ai/choregraph/issues).
+Contributions are welcome under the project's **[Contributor License Agreement](licensing/CLA.md)** — signed once, on your first pull request (a license grant, not an assignment; you keep your rights). Bug reports and ideas are welcome via [GitHub Issues](https://github.com/nveil-ai/choregraph/issues).
 
 ## License
 
-Dual-licensed: **AGPL-3.0-or-later** (see [`LICENSE`](LICENSE)) and a **commercial** license for closed-source / proprietary use (see [`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md)) — contact `pierre.jacquet@nveil.com`.
+Dual-licensed: **AGPL-3.0-or-later** (see [`LICENSE`](LICENSE)) and a **commercial** license for closed-source / proprietary use (see [`COMMERCIAL-LICENSE.md`](licensing/COMMERCIAL-LICENSE.md)) — contact `pierre.jacquet@nveil.com`.

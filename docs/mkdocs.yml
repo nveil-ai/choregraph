@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 site_name: Choregraph
+docs_dir: pages
 site_description: "Choregraph: graph-based data processing library for NVEIL"
 site_url: ""
 
@@ -49,7 +50,7 @@ plugins:
       default_handler: python
       handlers:
         python:
-          paths: [src]
+          paths: [../src]
           options:
             docstring_style: google
             docstring_section_style: spacy
