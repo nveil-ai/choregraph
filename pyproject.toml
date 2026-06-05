@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "choregraph"
 dynamic = ["version"]
-description = "Data processing engine for the NVEIL Toolkit. Install via: pip install nveil"
+description = "The pure-Python data-processing engine behind NVEIL, built on Kedro. Usable on its own."
 authors = [{name = "NVEIL", email = "contact@nveil.com"}]
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
