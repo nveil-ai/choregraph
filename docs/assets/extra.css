@@ -1,0 +1,10 @@
+/*
+ * SPDX-FileCopyrightText: 2026 NVEIL SAS
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+/* Match the docs.nveil.com hub logo size for a consistent header across sites */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 2.4rem;
+}
