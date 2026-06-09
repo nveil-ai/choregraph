@@ -996,14 +996,14 @@ def arithmetic_op(df: pd.DataFrame, left_column: str, right_column: Optional[str
 
     res_df = df.copy()
 
-    # 1. Validation et Conversion de la colonne de GAUCHE
+    # 1. Validate and convert the LEFT column
     if left_column not in res_df.columns:
         raise ValueError(f"Column '{left_column}' not found")
-    
-    # On force la conversion en numérique (important pour éviter ton erreur !)
+
+    # Coerce to numeric to avoid type errors during the operation
     left_val = pd.to_numeric(res_df[left_column], errors='coerce')
 
-    # 2. Validation et Conversion de la partie de DROITE
+    # 2. Validate and convert the RIGHT operand
     if right_column:
         if right_column not in res_df.columns:
             raise ValueError(f"Column '{right_column}' not found")
@@ -1013,7 +1013,7 @@ def arithmetic_op(df: pd.DataFrame, left_column: str, right_column: Optional[str
     else:
         raise ValueError("Either right_column or constant must be provided")
 
-    # 3. Opérations avec les méthodes Pandas (plus safe que les opérateurs standards)
+    # 3. Apply the operation via pandas methods (safer than raw operators)
     if operator == 'ADD':
         res_df[output_column] = left_val.add(right_val)
     elif operator == 'SUB':
@@ -1513,7 +1513,7 @@ def _collect_leaf_fields(schema: dict, max_leaves: int = 50) -> list:
     return leaves
 
 def remove_required_keys(data):
-    """Parcourt récursivement le dictionnaire pour supprimer les clés 'required'."""
+    """Recursively walk the dictionary and strip out 'required' keys."""
     if isinstance(data, dict):
         return {k: remove_required_keys(v) for k, v in data.items() if k != 'required'}
     elif isinstance(data, list):

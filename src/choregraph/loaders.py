@@ -78,24 +78,37 @@ class LLMCsvCharacterization(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _llm_characterize_csv(sample_lines: List[str]) -> Optional[dict]:
+def _llm_characterize_csv(
+    sample_lines: List[str],
+    *,
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model_override: Optional[str] = None,
+) -> Optional[dict]:
     """Ask an LLM to characterize a CSV file from its first lines.
 
-    Auto-detects the provider by walking the stack's boot order over the
-    configured env vars (see :func:`choregraph.llm_config.select_provider`)
-    — the same selection the ai_service uses — and runs its cheap
-    ``minimal:`` model from the provider yaml.
+    Runs the cheap ``minimal:`` model from the provider yaml. The caller may
+    pass an already-resolved provider config (the ai_service does this with its
+    boot-selected provider); when *provider* is ``None`` the provider is
+    auto-detected by walking the stack's boot order over the configured env
+    vars (see :func:`choregraph.llm_config.select_provider`) — the standalone
+    / Kedro path.
 
     Returns a dict compatible with :func:`characterize_csv` on success,
     or ``None`` when no provider is configured or the call fails.
     """
-    sel = select_provider()
-    if sel is None:
-        logger.warning(
-            "_llm_characterize_csv: no LLM provider configured — skipping LLM fallback"
-        )
-        return None
-    provider = sel["provider"]
+    if provider is None:
+        sel = select_provider()
+        if sel is None:
+            logger.warning(
+                "_llm_characterize_csv: no LLM provider configured — skipping LLM fallback"
+            )
+            return None
+        provider = sel["provider"]
+        api_key = sel["api_key"]
+        base_url = sel["base_url"]
+        model_override = sel["model_override"]
 
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
@@ -125,10 +138,10 @@ def _llm_characterize_csv(sample_lines: List[str]) -> Optional[dict]:
         # be resolved (no configs) → caught below, LLM fallback skipped.
         llm = build_chat_model(
             provider,
-            sel["api_key"],
+            api_key,
             "minimal",
-            base_url=sel["base_url"],
-            model_override=sel["model_override"],
+            base_url=base_url,
+            model_override=model_override,
         )
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
 

@@ -6,24 +6,20 @@
 from typing import List, Optional, Dict, Any, Literal, Union
 from pydantic import BaseModel, Field
 
-# =============================================================================
-# SCHÉMAS PYDANTIC - CARTOGRAPHER 
-# =============================================================================
-#TODO: Vérifier les noeuds choregraph d'appels aux LLM pour assurer une intégrité (voir si on peut utiliser Kedro directement).
+# Pydantic schemas - Cartographer
+
 class BoundingBox(BaseModel):
-    """Représente une zone rectangulaire dans Excel via ses coordonnées."""
+    """A rectangular region in an Excel sheet, defined by its coordinates."""
     range: str = Field(..., description="Excel coordinates (ex: 'A1:G50')")
     start_cell: str = Field(..., description="Top-left cell (ex: 'A1')")
     end_cell: str = Field(..., description="Bottom-right cell (ex: 'G50')")
 
 
 class TableStructure(BaseModel):
-    """
-    Description structurelle d'une table détectée dans un fichier Excel.
-    
-    NOUVEAUX CHAMPS (par rapport à l'original):
-    - header_complexity: Indique la complexité des headers (simple, multi_row, none)
-    - pattern_type: Indique le pattern de données (flat_list, cross_tab, form, hierarchical)
+    """Structural description of a table detected in an Excel file.
+
+    - header_complexity: header complexity (simple, multi_row, none).
+    - pattern_type: data pattern (flat_list, cross_tab, transposed_grid, form).
     """
     table_id: str = Field(..., description="Unique ID, ex: 'table_0'")
     label: str = Field(..., description="Descriptive name, ex: 'Sales Data Q1'")
@@ -114,9 +110,7 @@ class SpreadsheetMap(BaseModel):
     )
 
 
-# =============================================================================
-# PROMPTS - CARTOGRAPHER 
-# =============================================================================
+# Prompts - Cartographer
 
 SYSTEM_PROMPT_CARTOGRAPH = """
 You are an expert in Forensic Data Analysis. Your mission is to deconstruct the visual and logical structure of raw Excel spreadsheets.

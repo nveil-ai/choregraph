@@ -129,12 +129,12 @@ def _restore_ods_merges(source_ods: str, converted_xlsx: str):
 
 
 def get_compatible_excel_path(source_path: str) -> str:
-    """
-    Assure que le fichier est au format .xlsx pour openpyxl.
-    Si c'est un .xls ou .ods, on le convertit via pyexcel dans un fichier temporaire.
-    For .xls/.ods files, merged-cell values are restored after conversion (pyexcel
-    strips merge info, leaving phantom/empty values in non-origin cells).
-    Temp files are tracked and cleaned up by cleanup_temp_files().
+    """Ensure the file is in .xlsx format for openpyxl.
+
+    .xls and .ods files are converted to a temporary .xlsx via pyexcel. For those
+    formats, merged-cell values are restored after conversion (pyexcel strips merge
+    info, leaving phantom/empty values in non-origin cells). Temp files are tracked
+    and cleaned up by cleanup_temp_files().
     """
     path = Path(source_path)
     extension = path.suffix.lower()
@@ -243,18 +243,13 @@ def _align_column_names(results: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFr
     }
 
 
-# =============================================================================
-# FONCTIONS UTILITAIRES
-# =============================================================================
-
 def extract_sub_table(df_initial: pd.DataFrame, excel_range: str) -> pd.DataFrame:
-    """
-    Extrait un sous-tableau d'un DataFrame à partir d'une plage Excel.
+    """Extract a sub-table from a DataFrame given an Excel range.
+
     Validates the range against actual DataFrame dimensions.
     """
     min_col, min_row, max_col, max_row = range_boundaries(excel_range)
 
-    # R2: Validate that the range makes sense
     if min_row > max_row or min_col > max_col:
         raise ValueError(f"Invalid range '{excel_range}': inverted boundaries")
 
@@ -276,28 +271,24 @@ def extract_sub_table(df_initial: pd.DataFrame, excel_range: str) -> pd.DataFram
 
 
 def df_to_markdown(df: pd.DataFrame, max_rows: int = 15) -> str:
-    """
-    Convertit un DataFrame en table Markdown pour les prompts LLM.
-    
+    """Convert a DataFrame to a Markdown table for LLM prompts.
+
     Args:
-        df: DataFrame à convertir
-        max_rows: Nombre max de lignes à afficher
-        
+        df: DataFrame to convert.
+        max_rows: Maximum number of rows to display.
+
     Returns:
-        String Markdown de la table
+        Markdown string of the table.
     """
-    # Limiter le nombre de lignes
     if len(df) > max_rows:
         df_display = pd.concat([df.head(max_rows - 2), df.tail(2)])
     else:
         df_display = df
-    
-    # Construire le header
+
     header_cells = [str(col).replace("|", "\\|") for col in df_display.columns]
     markdown = "| " + " | ".join(header_cells) + " |\n"
     markdown += "|" + "|".join(["---"] * len(header_cells)) + "|\n"
-    
-    # Construire les lignes
+
     for idx, (_, row) in enumerate(df_display.iterrows()):
         if len(df) > max_rows and idx == max_rows - 2:
             markdown += "| ... | " + " | ".join(["..."] * (len(header_cells) - 1)) + " |\n"
@@ -311,11 +302,10 @@ def df_to_markdown(df: pd.DataFrame, max_rows: int = 15) -> str:
 
 
 def get_llm_friendly_columns(sub_df: pd.DataFrame, head: int = 8, tail: int = 3) -> str:
-    """
-    Génère une description des colonnes pour le prompt LLM.
-    
-    Affiche seulement head + tail colonnes si trop nombreuses.
-    Inclut un exemple de valeur pour chaque colonne.
+    """Generate a column description for the LLM prompt.
+
+    Shows only the first ``head`` and last ``tail`` columns when there are too
+    many, and includes a sample value for each column.
     """
     columns = list(sub_df.columns)
     total = len(columns)
@@ -330,22 +320,22 @@ def get_llm_friendly_columns(sub_df: pd.DataFrame, head: int = 8, tail: int = 3)
     lines = []
     for i, idx in enumerate(indices_to_show):
         if skip_info and i == head:
-            lines.append(f"  ... ({skip_info[2]} colonnes omises: index {skip_info[0]} → {skip_info[1]}) ...")
-        
+            lines.append(f"  ... ({skip_info[2]} columns omitted: index {skip_info[0]} -> {skip_info[1]}) ...")
+
         col = columns[idx]
-        first_val = sub_df[col].dropna().iloc[0] if not sub_df[col].dropna().empty else "vide"
+        first_val = sub_df[col].dropna().iloc[0] if not sub_df[col].dropna().empty else "empty"
         first_val_str = str(first_val)
         if len(first_val_str) > 30:
             first_val_str = first_val_str[:30] + "..."
         lines.append(f"- [{idx}] Column '{col}' (ex: \"{first_val_str}\")")
     
-    header = f"📊 {total} colonnes au total:\n"
+    header = f"{total} columns total:\n"
     return header + "\n".join(lines)
 
 
 def print_table_structure(table: 'TableStructure') -> str:
-    """Affichage formaté d'une TableStructure."""
-    pretty = f"📊 [{table.table_id}] {table.label}\n"
+    """Format a TableStructure for display."""
+    pretty = f"[{table.table_id}] {table.label}\n"
     pretty += f"   Sheet: {table.sheet_name}\n"
     pretty += f"   Type: {table.type} | Orientation: {table.orientation}\n"
     pretty += f"   Pattern: {table.pattern_type} | Header Complexity: {table.header_complexity}\n"
@@ -362,7 +352,7 @@ def print_table_structure(table: 'TableStructure') -> str:
 
 
 def print_spreadsheet_map(sm: 'SpreadsheetMap') -> str:
-    """Affichage formaté d'une SpreadsheetMap."""
+    """Format a SpreadsheetMap for display."""
     pretty = "=" * 60 + "\n"
     pretty += f"Spreadsheet Map ({len(sm.detected_tables)} table(s))\n"
     pretty += "=" * 60 + "\n"
@@ -380,8 +370,8 @@ def print_spreadsheet_map(sm: 'SpreadsheetMap') -> str:
 
 
 def print_region_mapping(mapping: 'RegionMapping') -> str:
-    """Affichage formaté d'un RegionMapping."""
-    pretty = f"🗺️ RegionMapping for {mapping.table_id}\n"
+    """Format a RegionMapping for display."""
+    pretty = f"RegionMapping for {mapping.table_id}\n"
     pretty += f"   Pattern: {mapping.pattern}\n"
     pretty += f"   Header Row Index: {mapping.header_row_index}\n"
     

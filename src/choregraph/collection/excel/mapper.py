@@ -3,32 +3,27 @@
 # SPDX-FileContributor: Pierre Jacquet
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# =============================================================================
-# SCHÉMAS PYDANTIC - STRUCTURAL MAPPER (Approche Déclarative)
-# =============================================================================
-# 
-# Ces schémas représentent l'output du Structural Mapper.
-# Au lieu de spécifier des opérations Pandas (impératif), on décrit la 
-# SÉMANTIQUE des zones du tableau (déclaratif).
+# Pydantic schemas - Structural Mapper (declarative approach)
 #
-# L'ETL Compiler (algorithme Python) traduira ensuite ce mapping en opérations.
-# =============================================================================
+# These schemas describe the Structural Mapper's output. Rather than specifying
+# pandas operations (imperative), they describe the SEMANTICS of the table's
+# regions (declarative). The ETL compiler then translates this mapping into
+# concrete operations.
 from typing import List, Optional, Dict, Any, Literal, Union
 from pydantic import BaseModel, Field
 
 class CellReference(BaseModel):
-    """
-    Référence hybride pour une colonne Excel.
-    
-    PRINCIPE CLÉ: On utilise les coordonnées Excel (A, B, C) comme "vérité absolue"
-    car elles ne changent jamais. Les noms sémantiques sont appliqués À LA FIN
-    du pipeline, une fois la structure normalisée.
-    
+    """Hybrid reference to an Excel column.
+
+    Excel coordinates (A, B, C) are used as the ground truth because they never
+    change. Semantic names are applied at the END of the pipeline, once the
+    structure is normalized.
+
     Attributes:
-        col_idx: Lettre de la colonne Excel (A, B, C...) - VÉRITÉ ABSOLUE
-        detected_name: Valeur lue dans la cellule header (peut être None si pas de header)
-        semantic_name: Nom propre proposé pour le DataFrame final (snake_case)
-        data_type: Type de données attendu dans cette colonne
+        col_idx: Excel column letter (A, B, C...) — the ground truth.
+        detected_name: Value read from the header cell (None if no header).
+        semantic_name: Proposed snake_case name for the final DataFrame.
+        data_type: Expected data type for this column.
     """
     col_idx: str = Field(..., description="Excel column letter (A, B, C...). This is the ground truth.")
     detected_name: Optional[str] = Field(None, description="Header value seen in the cell, if any")
@@ -40,20 +35,17 @@ class CellReference(BaseModel):
 
 
 class AnchorZone(BaseModel):
-    """
-    Zone d'ancrage - colonnes qui restent FIXES lors d'un unpivot.
-    
-    Ces colonnes définissent l'IDENTITÉ de chaque ligne :
-    - ProductID, CustomerName, Date, Category, etc.
-    
-    En termes Pandas, ce sont les `id_vars` de la fonction `melt()`.
-    
-    Exemple:
-        Si la table est: | Product | Jan | Feb | Mar |
-                        | Widget  | 100 | 120 | 110 |
-        
-        Alors AnchorZone.columns = [CellReference(col_idx="A", semantic_name="Product")]
-        Car "Product" est l'identifiant, pas une valeur à pivoter.
+    """Anchor zone — columns that stay FIXED during an unpivot.
+
+    These columns define the IDENTITY of each row (ProductID, CustomerName,
+    Date, Category, etc.). In pandas terms, they are the ``id_vars`` of ``melt()``.
+
+    Example:
+        For the table: | Product | Jan | Feb | Mar |
+                       | Widget  | 100 | 120 | 110 |
+
+        AnchorZone.columns = [CellReference(col_idx="A", semantic_name="Product")]
+        because "Product" is the identifier, not a value to pivot.
     """
     columns: List[CellReference] = Field(
         ..., 
@@ -62,25 +54,23 @@ class AnchorZone(BaseModel):
 
 
 class PivotZone(BaseModel):
-    """
-    Zone de pivot - headers qui sont en fait des DONNÉES à "déplier".
-    
-    Ces colonnes représentent une dimension cachée qui est actuellement
-    étalée horizontalement mais qui devrait être une colonne verticale.
-    
-    Exemples de dimensions cachées:
-    - Années: 2019, 2020, 2021 → deviendra colonne "year"
-    - Mois: Jan, Feb, Mar → deviendra colonne "month"
-    - Jours: Jour 1, Jour 2, Jour 3 → deviendra colonne "day"
-    - Catégories répétées horizontalement
-    
-    En termes Pandas, ce sont les `value_vars` de la fonction `melt()`.
-    
+    """Pivot zone — headers that are actually DATA to "unfold".
+
+    These columns represent a hidden dimension currently spread horizontally
+    that should become a single vertical column. In pandas terms, they are the
+    ``value_vars`` of ``melt()``.
+
+    Examples of hidden dimensions:
+    - Years: 2019, 2020, 2021 -> becomes a "year" column.
+    - Months: Jan, Feb, Mar -> becomes a "month" column.
+    - Days: Day 1, Day 2, Day 3 -> becomes a "day" column.
+    - Categories repeated horizontally.
+
     Attributes:
-        col_range_start: Première colonne du range (ex: "B")
-        col_range_end: Dernière colonne du range (ex: "M")
-        target_name: Nom de la NOUVELLE colonne créée après unpivot
-        extracted_type: Type des valeurs extraites des headers
+        col_range_start: First column of the range (e.g. "B").
+        col_range_end: Last column of the range (e.g. "M").
+        target_name: Name of the NEW column created after unpivot.
+        extracted_type: Data type of the values extracted from the headers.
     """
     col_range_start: str = Field(..., description="First column letter of the pivot range (e.g., 'B')")
     col_range_end: str = Field(..., description="Last column letter of the pivot range (e.g., 'M')")
@@ -95,22 +85,21 @@ class PivotZone(BaseModel):
 
 
 class ValueZone(BaseModel):
-    """
-    Zone de valeurs - le corps numérique/données du tableau.
-    
-    Ces cellules contiennent les mesures/métriques/observations.
-    Après unpivot, elles deviennent une seule colonne de valeurs.
-    
-    Exemple:
-        Dans | Product | Jan | Feb |
-             | Widget  | 100 | 120 |
-        
-        100 et 120 sont dans la ValueZone.
-        Après unpivot: | Product | Month | Sales |
+    """Value zone — the numeric/data body of the table.
+
+    These cells hold the measures/metrics/observations. After an unpivot they
+    become a single value column.
+
+    Example:
+        In | Product | Jan | Feb |
+           | Widget  | 100 | 120 |
+
+        100 and 120 belong to the ValueZone.
+        After unpivot: | Product | Month | Sales |
                        | Widget  | Jan   | 100   |
                        | Widget  | Feb   | 120   |
-        
-        "Sales" est le ValueZone.target_name
+
+        "Sales" is the ValueZone.target_name.
     """
     target_name: str = Field(
         ..., 
@@ -123,19 +112,18 @@ class ValueZone(BaseModel):
 
 
 class FormKeyValue(BaseModel):
-    """
-    Représente une paire clé-valeur pour le pattern FORM.
-    
-    Le pattern FORM est utilisé pour les données de type "fiche technique"
-    où les données sont organisées en paires Label/Valeur plutôt qu'en tableau.
-    
-    Exemple de structure FORM:
-        | A        | B       |
-        | Nom      | Dupont  |
-        | Prénom   | Jean    |
-        | Age      | 42      |
-    
-    Ici, chaque ligne est une paire clé-valeur, pas une observation.
+    """A key-value pair for the FORM pattern.
+
+    The FORM pattern is used for "spec sheet" style data where information is
+    organized as label/value pairs rather than as a table.
+
+    Example FORM structure:
+        | A          | B       |
+        | Last name  | Dupont  |
+        | First name | Jean    |
+        | Age        | 42      |
+
+    Here each row is a key-value pair, not an observation.
     """
     key_column: str = Field(..., description="Excel column letter containing the keys/labels")
     value_column: str = Field(..., description="Excel column letter containing the values")
@@ -146,41 +134,39 @@ class FormKeyValue(BaseModel):
 
 
 class RegionMapping(BaseModel):
+    """Main output of the Structural Mapper — a DECLARATIVE description of regions.
+
+    This schema does NOT say "run a melt" (imperative); it says "here are the
+    semantic regions" (declarative). The ETL compiler then translates the
+    mapping into pandas operations.
+
+    Supported patterns:
+
+    1. FLAT_LIST (no structural transformation):
+       - anchors holds every column.
+       - pivot_axis = None.
+       - The ETL compiler only renames and casts types.
+
+    2. CROSS_TAB (unpivot required):
+       - anchors holds the identity columns.
+       - pivot_axis defines the range of columns to pivot.
+       - value_body defines the resulting value column.
+       - The ETL compiler generates a melt().
+
+    3. FORM (key-value extraction):
+       - form_mapping holds the key-value pairs.
+       - The ETL compiler transposes and restructures.
     """
-    Output principal du Structural Mapper - Description DÉCLARATIVE des régions.
-    
-    Ce schéma ne dit PAS "fais un melt" (impératif).
-    Il dit "voici les régions sémantiques" (déclaratif).
-    
-    L'ETL Compiler traduira ensuite ce mapping en opérations Pandas.
-    
-    PATTERNS SUPPORTÉS:
-    
-    1. FLAT_LIST (pas de transformation structurelle):
-       - anchors contient toutes les colonnes
-       - pivot_axis = None
-       - L'ETL Compiler fait juste du renommage et du typage
-    
-    2. CROSS_TAB (unpivot nécessaire):
-       - anchors contient les colonnes d'identité
-       - pivot_axis définit la plage de colonnes à pivoter
-       - value_body définit la colonne de valeurs résultante
-       - L'ETL Compiler génère un melt()
-    
-    3. FORM (extraction clé-valeur):
-       - form_mapping contient les paires clé-valeur
-       - L'ETL Compiler transpose et restructure
-    """
-    table_id: str = Field(..., description="ID de la table (doit correspondre à TableStructure.table_id)")
-    
+    table_id: str = Field(..., description="Table ID (must match TableStructure.table_id)")
+
     pattern: Literal["flat_list", "cross_tab", "form", "transposed_grid"] = Field(
         ...,
         description="""
-        Pattern identifié pour cette table:
-        - flat_list: Tableau standard, pas de transformation structurelle
-        - cross_tab: Dimension étalée horizontalement → unpivot nécessaire
-        - form: Paires clé-valeur → extraction et transposition
-        - transposed_grid: Les variables sont en LIGNES (colonne A), les observations en COLONNES. Nécessite une TRANSPOSE simple.
+        Pattern identified for this table:
+        - flat_list: standard table, no structural transformation.
+        - cross_tab: dimension spread horizontally -> unpivot required.
+        - form: key-value pairs -> extraction and transposition.
+        - transposed_grid: variables are in ROWS (column A), observations in COLUMNS. Requires a simple TRANSPOSE.
         """
     )
     
@@ -189,7 +175,7 @@ class RegionMapping(BaseModel):
         description="0-indexed row containing the headers (within the extracted sub-table). None if no headers."
     )
     
-    # === RÉGIONS ===
+    # === REGIONS ===
     anchors: AnchorZone = Field(
         ...,
         description="Columns that define row identity (always required, even if just one column)"
@@ -211,7 +197,7 @@ class RegionMapping(BaseModel):
         description="ONLY for form pattern: key-value pair configuration"
     )
     
-    # === FILTRAGE ===
+    # === FILTERING ===
     rows_to_exclude_keywords: Optional[List[str]] = Field(
         None,
         description="Keywords to filter out from ALL string anchor columns using case-insensitive substring matching (e.g., ['Total', 'Subtotal', 'Sum'])"
@@ -219,9 +205,7 @@ class RegionMapping(BaseModel):
 
 
 
-# =============================================================================
-# PROMPTS - STRUCTURAL MAPPER (Approche Déclarative)
-# =============================================================================
+# Prompts - Structural Mapper
 
 SYSTEM_PROMPT_MAPPER = """
 You are a Structural Data Analyst specializing in understanding the semantic structure of Excel tables.

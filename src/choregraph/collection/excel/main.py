@@ -314,7 +314,7 @@ def tidy_excel_data(
     xlsx_path = get_compatible_excel_path(path_excel)
 
     try:
-        # STEP 1+2: Encode and build DataFrames from the same openpyxl workbook (P3 fix)
+        # STEP 1+2: Encode and build DataFrames from the same openpyxl workbook
         encoder = SpreadsheetEncoder(xlsx_path)
         encoding = encoder.encode_all_sheets()
         sheets_dict = encoder.get_dataframes()

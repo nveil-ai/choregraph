@@ -309,6 +309,20 @@ def test_llm_characterize_csv_import_error():
     assert result is None
 
 
+def test_llm_characterize_csv_explicit_provider_skips_select():
+    """A caller-supplied provider config bypasses select_provider entirely."""
+    with patch("choregraph.loaders.select_provider") as mock_select, patch(
+        "choregraph.loaders.build_chat_model", side_effect=RuntimeError("no network")
+    ):
+        result = _llm_characterize_csv(
+            ["a,b,c\n", "1,2,3\n"],
+            provider="google_genai",
+            api_key="fake-key",
+        )
+    mock_select.assert_not_called()
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # Tests for consistency-check LLM fallback (condition 3)
 # ---------------------------------------------------------------------------

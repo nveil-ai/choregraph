@@ -15,8 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class SpreadsheetEncoder:
-    """
-    Encode un fichier Excel en représentation textuelle pour les LLMs.
+    """Encode an Excel file into a textual representation for LLMs.
 
     Pre-processes merged cells: captures merge info for visual markers,
     then unmerges and fills values so downstream DataFrames are clean.
@@ -48,7 +47,7 @@ class SpreadsheetEncoder:
         except Exception:
             pass  # Graceful degradation (corrupted, .xls converted, etc.)
 
-        # P2 fix: capture merge info BEFORE unmerging, for all sheets
+        # Capture merge info BEFORE unmerging, for all sheets
         self.merge_maps: Dict[str, Dict] = {}
         for sheet_name in self.wb.sheetnames:
             sheet = self.wb[sheet_name]
@@ -69,10 +68,8 @@ class SpreadsheetEncoder:
         return merged_map
 
     def unmerge_and_fill_cells(self, sheet):
-        """
-        Parcourt toutes les plages fusionnées, copie la valeur de la cellule
-        en haut à gauche dans toutes les autres cellules, puis défusionne.
-        Modifie la feuille en place.
+        """Copy each merged range's top-left value into every cell of the range,
+        then unmerge it. Modifies the sheet in place.
         """
         merged_ranges = list(sheet.merged_cells.ranges)
 
@@ -88,7 +85,7 @@ class SpreadsheetEncoder:
                     sheet.cell(row=row, column=col).value = top_left_value
 
     def get_real_dimensions(self, sheet):
-        """Trouve la dernière ligne et colonne contenant réellement des données."""
+        """Find the last row and column that actually contain data."""
         if sheet.max_row == 0 or sheet.max_column == 0:
             return 0, 0
 
@@ -326,7 +323,7 @@ class SpreadsheetEncoder:
                 skip_start = prev_row + 1
                 skip_end = r - 1
                 skip_count = skip_end - skip_start + 1
-                skip_msg = f"| ... | ⋮ ({skip_count} lignes {skip_start}→{skip_end} omises) |"
+                skip_msg = f"| ... | ⋮ ({skip_count} rows {skip_start}->{skip_end} omitted) |"
                 output.append(skip_msg)
             
             prev_row = r
@@ -374,7 +371,7 @@ class SpreadsheetEncoder:
 
         This provides a single source of truth: the LLM encoding and the
         DataFrames used by the ETL engine both come from the same openpyxl
-        data, eliminating value disagreements (P3 fix).
+        data, eliminating value disagreements.
         """
         result = {}
         for sheet_name in self.wb.sheetnames:
@@ -394,14 +391,14 @@ class SpreadsheetEncoder:
         return result
     
     def render_range_as_markdown(self, sheet_name: str, excel_range: str, max_rows: int = 15) -> str:
-        """
-        Génère le rendu visuel riche (avec merges) pour une plage spécifique.
-        Remplace df_to_markdown pour le contexte LLM.
+        """Render a specific range with rich visual markers (merges included).
+
+        Replaces df_to_markdown for the LLM context.
         """
         sheet = self.wb[sheet_name]
         merged_map = self.merge_maps.get(sheet_name, {})
-        
-        # Récupérer les bornes (1-based pour openpyxl)
+
+        # Range boundaries (1-based for openpyxl)
         min_col, min_row, max_col, max_row = range_boundaries(excel_range)
         
         output = []
@@ -412,27 +409,27 @@ class SpreadsheetEncoder:
             header_parts.append(f" {get_column_letter(c)} |")
         output.append("".join(header_parts))
 
-        # 2. Séparateur
+        # 2. Separator
         output.append("|---|---|" + "---|" * (max_col - min_col + 1))
-        
-        # 3. Données
+
+        # 3. Data
         rows_to_render = []
-        
-        # Logique de troncature si trop de lignes
+
+        # Truncate if there are too many rows
         total_rows_in_range = max_row - min_row + 1
         if total_rows_in_range > max_rows:
             head_limit = min_row + max_rows - 3
             tail_start = max_row - 2
-            
+
             rows_to_render.extend(range(min_row, head_limit + 1))
-            rows_to_render.append(None) # Marqueur de saut
+            rows_to_render.append(None)  # Skip marker
             rows_to_render.extend(range(tail_start, max_row + 1))
         else:
             rows_to_render.extend(range(min_row, max_row + 1))
             
         for r in rows_to_render:
             if r is None:
-                output.append(f"| ... | | ⋮ ({total_rows_in_range - max_rows} lignes omises) |")
+                output.append(f"| ... | | ⋮ ({total_rows_in_range - max_rows} rows omitted) |")
                 continue
 
             row_cells = []
